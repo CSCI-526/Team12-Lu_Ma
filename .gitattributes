@@ -169,3 +169,8 @@ Packages/packages-lock.json linguist-generated
 
 # Exceptions for .asset files such as lightning pre-baking
 LightingData.asset     binary
+
+# Web build published to GitHub Pages (see README.md).
+# GitHub Pages serves Git LFS pointer files instead of the real files, so everything
+# inside WebBuild/ must be stored as normal git files, never in LFS. Keep this LAST.
+WebBuild/**             -filter -diff -merge

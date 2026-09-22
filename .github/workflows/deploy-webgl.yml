@@ -1,0 +1,73 @@
+# Builds the Unity WebGL player on every push to main and publishes it to the
+# bunfloof/Game-Jam-Build repository, which GitHub Pages serves at
+# https://bunfloof.github.io/Game-Jam-Build/
+#
+# Secrets this workflow needs (Settings > Secrets and variables > Actions on THIS repo):
+#   UNITY_LICENSE       full contents of Unity_lic.ulf (Unity Personal license)
+#   UNITY_EMAIL         email of the Unity account that activated that license
+#   UNITY_PASSWORD      password of that Unity account
+#   ACTIONS_DEPLOY_KEY  private SSH key; its public half is a write-enabled
+#                       deploy key on bunfloof/Game-Jam-Build
+
+name: Build and deploy WebGL
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# If several commits land close together, only the newest one gets built and deployed.
+concurrency:
+  group: webgl-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    name: Build WebGL and publish to GitHub Pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      # The Unity WebGL Docker image is large; make room for it on the runner.
+      - name: Free up disk space on the runner
+        uses: jlumbroso/free-disk-space@v2
+        with:
+          large-packages: false
+
+      # Reusing the Library folder between runs makes later builds much faster.
+      - name: Cache the Library folder
+        uses: actions/cache@v6
+        with:
+          path: Library
+          key: Library-WebGL-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-WebGL-
+
+      # Unity version is read from ProjectSettings/ProjectVersion.txt automatically.
+      # Output lands in build/WebGL/WebGL (index.html, Build/, TemplateData/).
+      - name: Build the WebGL player
+        uses: game-ci/unity-builder@v6
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: WebGL
+
+      # force_orphan keeps the build repo at a single commit so it does not grow
+      # by ~60 MB of binaries on every deploy. Remove it to keep deploy history.
+      - name: Publish the build to Game-Jam-Build
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.ACTIONS_DEPLOY_KEY }}
+          external_repository: bunfloof/Game-Jam-Build
+          publish_branch: main
+          publish_dir: build/WebGL/WebGL
+          force_orphan: true

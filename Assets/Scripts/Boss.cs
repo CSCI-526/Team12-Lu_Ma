@@ -12,8 +12,11 @@
 //   - Breaking ALL 5 parts deals a big extra hit (allPartsBonusDamage). If the
 //     boss is still alive, the parts regrow with new words after regrowSeconds.
 //     With the default numbers one full round (5 x 100 + 400 = 900) kills it.
-//   - Every attackInterval seconds the boss hits the player for attackDamage.
+//   - Every attackInterval seconds the boss fires an EnergyOrb at the player.
 //     Its body slowly turns red during the last attackWarningSeconds, as a warning.
+//     The orb carries a short, case-sensitive word with symbols (e.g. "Sp@rk"):
+//     typing it shoots the orb down; if it arrives (after orbFlightSeconds) the
+//     player takes attackDamage.
 //   - Health 0 = boss dies. WaveSpawner waits for that, then the rail moves on.
 // The red health bar at the top of the screen is drawn by HUD (ShowBossBar).
 // The parts' words are HUD texts too, placed by WaveSpawner.LayoutLabels.
@@ -32,9 +35,10 @@ public class Boss : MonoBehaviour
     [SerializeField] private float regrowSeconds = 1.5f;        // pause before broken parts come back
 
     [Header("Attack")]
-    [SerializeField] private float attackInterval = 8f;         // seconds between hits on the player (0 = never attacks)
-    [SerializeField] private int attackDamage = 10;
-    [SerializeField] private float attackWarningSeconds = 3f;   // the body turns red over this many seconds before a hit
+    [SerializeField] private float attackInterval = 8f;         // seconds between energy orbs (0 = never attacks)
+    [SerializeField] private int attackDamage = 15;             // damage if an orb reaches the player
+    [SerializeField] private float attackWarningSeconds = 3f;   // the body turns red over this many seconds before an orb
+    [SerializeField] private float orbFlightSeconds = 5f;       // time the player has to type the orb's word
 
     [Header("Look")]
     [SerializeField] private Color bodyColor = new Color(0.55f, 0.58f, 0.62f);   // normal colour (grey)
@@ -47,6 +51,7 @@ public class Boss : MonoBehaviour
     public float Health { get; private set; }
 
     private readonly List<BossPart> parts = new List<BossPart>();
+    private readonly List<EnergyOrb> orbs = new List<EnergyOrb>(); // orbs fired and still in the air
     private Renderer torso;
     private HUD hud;
     private Vector3 homePosition;  // where the boss stands (shaking moves it around this point)
@@ -122,7 +127,8 @@ public class Boss : MonoBehaviour
         parts.Add(new BossPart(this, block, label, labelLocalPosition));
     }
 
-    // Adds every part that can still be typed to the list (used by WaveSpawner.GetTypingTargets).
+    // Adds every part and energy orb that can still be typed to the list
+    // (used by WaveSpawner.GetTypingTargets).
     public void AddTypeableParts(List<ITypingTarget> targets)
     {
         foreach (BossPart part in parts)
@@ -131,6 +137,12 @@ public class Boss : MonoBehaviour
             {
                 targets.Add(part);
             }
+        }
+
+        orbs.RemoveAll(orb => !orb.IsAlive); // forget orbs that burst or hit the player
+        foreach (EnergyOrb orb in orbs)
+        {
+            targets.Add(orb);
         }
     }
 
@@ -175,10 +187,41 @@ public class Boss : MonoBehaviour
         if (attackTimer >= attackInterval)
         {
             attackTimer = 0f;
-            GameManager.Instance.TakeDamage(attackDamage);
-            hud.FlashRed();
+            LaunchOrb();
             Shake();
         }
+    }
+
+    // Fires an energy orb from the boss's chest at the player. Its word never
+    // starts with the same letter as a standing part or another orb, so the
+    // first key always picks exactly one target.
+    private void LaunchOrb()
+    {
+        Vector3 chest = transform.TransformPoint(new Vector3(0f, 4.5f, -1.2f));
+        string word = WordBank.PickOrbWord(UsedFirstLetters());
+        orbs.Add(EnergyOrb.Launch(chest, word, orbFlightSeconds, attackDamage, hud));
+    }
+
+    // First letters (UPPERCASE) of every word the player could type right now:
+    // standing parts and orbs in the air.
+    private List<char> UsedFirstLetters()
+    {
+        List<char> used = new List<char>();
+        foreach (BossPart part in parts)
+        {
+            if (!part.IsBroken)
+            {
+                used.Add(char.ToUpperInvariant(part.Word[0]));
+            }
+        }
+        foreach (EnergyOrb orb in orbs)
+        {
+            if (orb.IsAlive)
+            {
+                used.Add(char.ToUpperInvariant(orb.Word[0]));
+            }
+        }
+        return used;
     }
 
     // ---- Taking damage (called by BossPart) ----
@@ -235,7 +278,16 @@ public class Boss : MonoBehaviour
     // Every part gets a new hard word, each with a different first letter.
     private void GiveEveryPartANewWord()
     {
+        // Orbs may be in the air: keep clear of their first letters too.
         List<char> usedFirstLetters = new List<char>();
+        foreach (EnergyOrb orb in orbs)
+        {
+            if (orb.IsAlive)
+            {
+                usedFirstLetters.Add(char.ToUpperInvariant(orb.Word[0]));
+            }
+        }
+
         foreach (BossPart part in parts)
         {
             string word = WordBank.PickBossWord(usedFirstLetters);
@@ -254,6 +306,11 @@ public class Boss : MonoBehaviour
         {
             Destroy(part.Label.gameObject); // the words are on the HUD, not children of the boss
         }
+        foreach (EnergyOrb orb in orbs)
+        {
+            orb.Dissipate(); // orbs still in the air fizzle out harmlessly
+        }
+        orbs.Clear();
         StartCoroutine(DeathEffect());
     }
 
@@ -326,6 +383,11 @@ public class BossPart : ITypingTarget
         get { return TypedCount > 0; }
     }
 
+    public bool IsCaseSensitive
+    {
+        get { return false; }
+    }
+
     public Vector3 Position
     {
         get { return block.transform.position; }
@@ -386,9 +448,11 @@ public class BossPart : ITypingTarget
         block.material.color = color;
     }
 
+    // Same look as a zombie's word: stored UPPERCASE, shown in lowercase.
     private void RefreshLabel()
     {
-        ColoredWord = Zombie.TypedColorTag + Word.Substring(0, TypedCount) + "</color>" + Word.Substring(TypedCount);
+        string shown = Word.ToLowerInvariant();
+        ColoredWord = Zombie.TypedColorTag + shown.Substring(0, TypedCount) + "</color>" + shown.Substring(TypedCount);
         Label.text = ColoredWord;
     }
 }

@@ -40,7 +40,8 @@ public class GameManager : MonoBehaviour
     [SerializeField] private HUD hud;
     [SerializeField] private WaveSpawner spawner;
 
-    // Each kill is worth PointsPerKill x the current combo.
+    // Each kill is worth PointsPerKill x the current combo (x the multi-kill
+    // multiplier when one shot kills several, see AddKills).
     private const int PointsPerKill = 10;
 
     public GameState State { get; private set; }
@@ -194,13 +195,40 @@ public class GameManager : MonoBehaviour
         Time.timeScale = 1f;
     }
 
-    // Called once for every zombie killed (typed or caught in a blast).
+    // Called for a single kill (a normal zombie, a boss part, the boss).
     public void AddKill()
     {
-        Score += PointsPerKill * Combo;
-        Combo += 1;
+        AddKills(1);
+    }
+
+    // Called with every enemy killed by ONE shot at once (an explosive zombie's
+    // blast can kill several). Each kill is worth PointsPerKill x combo, and the
+    // combo goes up by 1 per kill as usual. MULTI-KILL: when one shot kills
+    // 2 or more, every one of those kills is also multiplied by that number
+    // (3 kills at once = x3 points each), and the HUD shows "TRIPLE KILL!".
+    public void AddKills(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        int multiplier = count >= 2 ? count : 1;
+        int gained = 0;
+        for (int i = 0; i < count; i++)
+        {
+            gained += PointsPerKill * Combo * multiplier;
+            Combo += 1;
+        }
+
+        Score += gained;
         hud.SetScore(Score);
         hud.SetCombo(Combo);
+
+        if (count >= 2)
+        {
+            hud.ShowMultiKill(count, gained);
+        }
     }
 
     // Called on a wrong key, and when the player takes damage.

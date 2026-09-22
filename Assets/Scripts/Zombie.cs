@@ -198,6 +198,11 @@ public class Zombie : MonoBehaviour, ITypingTarget
         get { return TypedCount > 0; }
     }
 
+    public bool IsCaseSensitive
+    {
+        get { return false; }
+    }
+
     // ---- Typing progress (used by TypingController) ----
 
     // The letter the player has to type next.
@@ -256,8 +261,9 @@ public class Zombie : MonoBehaviour, ITypingTarget
         // Let the ring go first, so it survives this zombie and can play its effect.
         ring.PlayBlastEffect();
 
-        // Copy the list, because Die() removes zombies from the spawner's list while we loop.
+        // Copy the list, because Remove() takes zombies out of the spawner's list while we loop.
         List<Zombie> zombies = new List<Zombie>(spawner.AliveZombies);
+        int kills = 0;
         foreach (Zombie other in zombies)
         {
             // The ring is flat on the ground, so measure the distance on the ground too.
@@ -267,12 +273,16 @@ public class Zombie : MonoBehaviour, ITypingTarget
             // This zombie is in the list as well (distance 0), so it dies with the rest.
             if (offset.magnitude <= BlastRadius)
             {
-                other.Die();
+                other.Remove();
+                kills += 1;
             }
         }
+
+        // Score the whole blast at once, so 2+ kills count as a MULTI-KILL.
+        GameManager.Instance.AddKills(kills);
     }
 
-    // Killed by the player (typed, or caught in a blast): counts for score.
+    // Killed by the player's bullet (a normal zombie): counts for score.
     public void Die()
     {
         GameManager.Instance.AddKill();
@@ -291,10 +301,12 @@ public class Zombie : MonoBehaviour, ITypingTarget
     }
 
     // Rebuilds the rich text: typed letters in yellow, remaining letters in white.
+    // Word is stored UPPERCASE (typing compares in uppercase) but SHOWN in lowercase.
     private void RefreshLabel()
     {
-        string typedPart = Word.Substring(0, TypedCount);
-        string remainingPart = Word.Substring(TypedCount);
+        string shown = Word.ToLowerInvariant();
+        string typedPart = shown.Substring(0, TypedCount);
+        string remainingPart = shown.Substring(TypedCount);
         ColoredWord = TypedColorTag + typedPart + "</color>" + remainingPart;
         Label.text = ColoredWord;
     }

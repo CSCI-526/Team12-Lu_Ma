@@ -123,6 +123,8 @@ public class HUD : MonoBehaviour
 
     private void Update()
     {
+        UpdateMultiKill();
+
         if (flashTimer <= 0f)
         {
             return;
@@ -132,6 +134,79 @@ public class HUD : MonoBehaviour
         flashTimer -= Time.unscaledDeltaTime; // unscaled: keeps fading while the game is paused
         float alpha = flashMaxAlpha * Mathf.Clamp01(flashTimer / flashDuration);
         SetFlashAlpha(alpha);
+    }
+
+    // ---- Multi-kill popup ----
+    // "TRIPLE KILL!" with the points under it, above the middle of the screen.
+    // It pops in big, settles to normal size, stays a moment, then fades out.
+
+    private const float MultiKillPopSeconds = 0.15f;  // shrinking from big to normal size
+    private const float MultiKillHoldSeconds = 0.9f;  // fully visible
+    private const float MultiKillFadeSeconds = 0.4f;  // fading out
+    private const float MultiKillPopScale = 1.6f;
+
+    private TMP_Text multiKillText; // null until the first multi-kill
+    private float multiKillAge = float.MaxValue;
+
+    public void ShowMultiKill(int kills, int points)
+    {
+        if (multiKillText == null)
+        {
+            multiKillText = CreateText(transform, "MultiKill", "", 96f, new Vector2(0f, 230f));
+            multiKillText.color = new Color(1f, 0.6f, 0.15f);
+            multiKillText.rectTransform.sizeDelta = new Vector2(1400f, 220f);
+            multiKillText.fontStyle = FontStyles.Bold;
+        }
+
+        string title;
+        if (kills == 2)
+        {
+            title = "DOUBLE KILL!";
+        }
+        else if (kills == 3)
+        {
+            title = "TRIPLE KILL!";
+        }
+        else if (kills == 4)
+        {
+            title = "QUAD KILL!";
+        }
+        else
+        {
+            title = "MASSACRE!";
+        }
+
+        multiKillText.text = title + "\n<size=55%>x" + kills + " SCORE  +" + points + "</size>";
+        multiKillText.transform.SetAsLastSibling();
+        multiKillText.gameObject.SetActive(true);
+        multiKillAge = 0f;
+        UpdateMultiKill();
+    }
+
+    private void UpdateMultiKill()
+    {
+        if (multiKillText == null || !multiKillText.gameObject.activeSelf)
+        {
+            return;
+        }
+
+        float total = MultiKillPopSeconds + MultiKillHoldSeconds + MultiKillFadeSeconds;
+        if (multiKillAge >= total)
+        {
+            multiKillText.gameObject.SetActive(false);
+            return;
+        }
+
+        // Scale: big -> normal during the pop.
+        float pop = Mathf.Clamp01(multiKillAge / MultiKillPopSeconds);
+        float scale = Mathf.Lerp(MultiKillPopScale, 1f, pop);
+        multiKillText.transform.localScale = new Vector3(scale, scale, 1f);
+
+        // Alpha: 1, then down to 0 during the fade.
+        float fadeStart = MultiKillPopSeconds + MultiKillHoldSeconds;
+        multiKillText.alpha = 1f - Mathf.Clamp01((multiKillAge - fadeStart) / MultiKillFadeSeconds);
+
+        multiKillAge += Time.deltaTime; // game time: the popup freezes while paused
     }
 
     private void SetFlashAlpha(float alpha)
@@ -174,6 +249,10 @@ public class HUD : MonoBehaviour
         HideBossBar();
         HidePausePanel();
         HideCountdown();
+        if (multiKillText != null)
+        {
+            multiKillText.gameObject.SetActive(false);
+        }
     }
 
     // ---- Boss health bar (top-centre) ----

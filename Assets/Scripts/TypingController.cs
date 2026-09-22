@@ -8,6 +8,11 @@
 //     as that word's first letter. If nothing matches, it is a wrong key.
 //   - Target exists: the next expected letter advances the word. Any other
 //     letter is a wrong key.
+//   - Zombie and boss-part words are stored UPPERCASE, shown in lowercase, and
+//     typing them is case-insensitive.
+//     The boss's energy orb words (e.g. "Sp@rk") are case-sensitive and may
+//     contain digits and symbols, which must be typed exactly. Digits and
+//     symbols are ignored while no orb is around.
 //   - A wrong key never resets progress. It flashes the screen red and resets
 //     the combo.
 //   - Backspace drops the current target so the player can retarget.
@@ -124,15 +129,23 @@ public class TypingController : MonoBehaviour
             target = null;
         }
 
-        // ---- 6. Handle every letter typed this frame ----
+        // ---- 6. Handle every character typed this frame ----
         foreach (char character in typedText)
         {
-            char letter = char.ToUpperInvariant(character);
-            if (letter < 'A' || letter > 'Z')
+            if (char.IsControl(character) || char.IsWhiteSpace(character))
             {
-                continue; // not a letter (space, digit, Enter, ...): ignore it
+                continue; // Enter, Backspace, space, ...: never part of a word
             }
-            HandleLetter(letter);
+
+            // Digits and symbols only matter while an energy orb (a case-sensitive
+            // word) is around; otherwise they are ignored, as before.
+            char upper = char.ToUpperInvariant(character);
+            bool isLetter = upper >= 'A' && upper <= 'Z';
+            if (!isLetter && !SymbolsMatter())
+            {
+                continue;
+            }
+            HandleCharacter(character);
         }
 
         // ---- 7. Show the current target's word at the bottom of the screen ----
@@ -146,21 +159,50 @@ public class TypingController : MonoBehaviour
         }
     }
 
-    private void HandleLetter(char letter)
+    // Does the typed character match the expected one? Case-sensitive targets
+    // (energy orbs) need the exact character; the others accept either case.
+    private static bool Matches(ITypingTarget candidate, char typed, char expected)
     {
-        // No target yet: this letter has to select one.
+        if (candidate.IsCaseSensitive)
+        {
+            return typed == expected;
+        }
+        return char.ToUpperInvariant(typed) == expected;
+    }
+
+    // True if digits/symbols should count as key presses right now: the current
+    // target is case-sensitive, or (no target yet) some case-sensitive target exists.
+    private bool SymbolsMatter()
+    {
+        if (target != null)
+        {
+            return target.IsCaseSensitive;
+        }
+        foreach (ITypingTarget candidate in spawner.GetTypingTargets())
+        {
+            if (candidate.IsCaseSensitive)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void HandleCharacter(char typed)
+    {
+        // No target yet: this character has to select one.
         if (target == null)
         {
-            target = FindNearestTargetStartingWith(letter);
+            target = FindNearestTargetStartingWith(typed);
             if (target == null)
             {
                 WrongKey();
                 return;
             }
-            // Carry on below: the selecting letter also counts as the word's first letter.
+            // Carry on below: the selecting character also counts as the word's first character.
         }
 
-        if (letter == target.NextLetter)
+        if (Matches(target, typed, target.NextLetter))
         {
             target.AdvanceProgress();
             if (target.IsWordComplete)
@@ -183,9 +225,9 @@ public class TypingController : MonoBehaviour
         hud.FlashRed();
     }
 
-    // Returns the alive zombie or boss part closest to the player whose word
-    // starts with the given letter, or null if there is none.
-    private ITypingTarget FindNearestTargetStartingWith(char letter)
+    // Returns the alive target (zombie, boss part or energy orb) closest to the
+    // player whose word starts with the typed character, or null if there is none.
+    private ITypingTarget FindNearestTargetStartingWith(char typed)
     {
         ITypingTarget nearest = null;
         float nearestDistance = float.MaxValue;
@@ -193,7 +235,7 @@ public class TypingController : MonoBehaviour
         foreach (ITypingTarget candidate in spawner.GetTypingTargets())
         {
             // Skip a target whose word is already done: a bullet is on its way to it.
-            if (candidate.IsWordComplete || candidate.Word[0] != letter)
+            if (candidate.IsWordComplete || !Matches(candidate, typed, candidate.Word[0]))
             {
                 continue;
             }

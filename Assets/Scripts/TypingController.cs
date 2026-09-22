@@ -3,15 +3,18 @@
 // The ONLY input in the game: reads the keyboard and turns letters into kills.
 //
 // Rules:
-//   - No target yet: the typed letter picks the NEAREST alive zombie whose word
-//     starts with that letter, and counts as that word's first letter.
-//     If no zombie matches, it is a wrong key.
+//   - No target yet: the typed letter picks the NEAREST alive zombie or boss
+//     part (see ITypingTarget) whose word starts with that letter, and counts
+//     as that word's first letter. If nothing matches, it is a wrong key.
 //   - Target exists: the next expected letter advances the word. Any other
 //     letter is a wrong key.
 //   - A wrong key never resets progress. It flashes the screen red and resets
 //     the combo.
-//   - Backspace or Escape drops the current target so the player can retarget.
-//   - Finishing the word makes the zombie explode (see Zombie.Explode).
+//   - Backspace drops the current target so the player can retarget.
+//   - Escape pauses the game (and resumes it from the pause panel, see
+//     GameManager.OnPauseKey). Letters typed while paused are ignored.
+//   - Finishing the word fires a Bullet at the target. When it hits, it calls
+//     CompleteWord(): a zombie dies or explodes, a boss part breaks.
 //   - Enter starts the game from the Start panel, and restarts it from the
 //     "You survived" / "You died" panels.
 //
@@ -32,8 +35,8 @@ public class TypingController : MonoBehaviour
     [SerializeField] private Transform player;
     [SerializeField] private HUD hud;
 
-    // The zombie whose word is currently being typed (null = no target).
-    private Zombie target;
+    // The zombie or boss part whose word is currently being typed (null = no target).
+    private ITypingTarget target;
 
 #if ENABLE_INPUT_SYSTEM
     private Keyboard keyboard;        // the keyboard we are listening to
@@ -61,7 +64,8 @@ public class TypingController : MonoBehaviour
         // ---- 1. Read the keyboard ----
         string typedText;
         bool enterPressed;
-        bool dropPressed; // Backspace or Escape
+        bool dropPressed;  // Backspace
+        bool pausePressed; // Escape
 
 #if ENABLE_INPUT_SYSTEM
         // Keyboard.current can be missing on the very first frames, or change if a
@@ -82,14 +86,22 @@ public class TypingController : MonoBehaviour
         typedText = pendingText;
         pendingText = "";
         enterPressed = keyboard != null && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
-        dropPressed = keyboard != null && (keyboard.backspaceKey.wasPressedThisFrame || keyboard.escapeKey.wasPressedThisFrame);
+        dropPressed = keyboard != null && keyboard.backspaceKey.wasPressedThisFrame;
+        pausePressed = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
 #else
         typedText = Input.inputString;
         enterPressed = Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
-        dropPressed = Input.GetKeyDown(KeyCode.Backspace) || Input.GetKeyDown(KeyCode.Escape);
+        dropPressed = Input.GetKeyDown(KeyCode.Backspace);
+        pausePressed = Input.GetKeyDown(KeyCode.Escape);
 #endif
 
-        // ---- 2. Outside of play, only Enter does something ----
+        // ---- 2. Escape: pause / resume ----
+        if (pausePressed)
+        {
+            GameManager.Instance.OnPauseKey();
+        }
+
+        // ---- 3. Outside of play, only Enter does something ----
         if (GameManager.Instance.State != GameState.Playing)
         {
             if (enterPressed)
@@ -99,20 +111,20 @@ public class TypingController : MonoBehaviour
             return;
         }
 
-        // ---- 3. Forget a target that is gone (it reached the player) ----
+        // ---- 4. Forget a target that is gone (it reached the player) ----
         if (target != null && !target.IsAlive)
         {
             target = null;
         }
 
-        // ---- 4. Backspace / Escape: drop the target ----
+        // ---- 5. Backspace: drop the target ----
         if (dropPressed && target != null)
         {
             target.ResetProgress();
             target = null;
         }
 
-        // ---- 5. Handle every letter typed this frame ----
+        // ---- 6. Handle every letter typed this frame ----
         foreach (char character in typedText)
         {
             char letter = char.ToUpperInvariant(character);
@@ -123,7 +135,7 @@ public class TypingController : MonoBehaviour
             HandleLetter(letter);
         }
 
-        // ---- 6. Show the current target's word at the bottom of the screen ----
+        // ---- 7. Show the current target's word at the bottom of the screen ----
         if (target != null)
         {
             hud.SetTargetWord(target.ColoredWord);
@@ -139,7 +151,7 @@ public class TypingController : MonoBehaviour
         // No target yet: this letter has to select one.
         if (target == null)
         {
-            target = FindNearestZombieStartingWith(letter);
+            target = FindNearestTargetStartingWith(letter);
             if (target == null)
             {
                 WrongKey();
@@ -153,7 +165,8 @@ public class TypingController : MonoBehaviour
             target.AdvanceProgress();
             if (target.IsWordComplete)
             {
-                target.Explode();
+                // Shoot it: the kill happens when the bullet hits (see Bullet).
+                Bullet.Fire(target);
                 target = null;
             }
         }
@@ -170,24 +183,25 @@ public class TypingController : MonoBehaviour
         hud.FlashRed();
     }
 
-    // Returns the alive zombie closest to the player whose word starts with
-    // the given letter, or null if there is none.
-    private Zombie FindNearestZombieStartingWith(char letter)
+    // Returns the alive zombie or boss part closest to the player whose word
+    // starts with the given letter, or null if there is none.
+    private ITypingTarget FindNearestTargetStartingWith(char letter)
     {
-        Zombie nearest = null;
+        ITypingTarget nearest = null;
         float nearestDistance = float.MaxValue;
 
-        foreach (Zombie zombie in spawner.AliveZombies)
+        foreach (ITypingTarget candidate in spawner.GetTypingTargets())
         {
-            if (zombie.Word[0] != letter)
+            // Skip a target whose word is already done: a bullet is on its way to it.
+            if (candidate.IsWordComplete || candidate.Word[0] != letter)
             {
                 continue;
             }
 
-            float distance = Vector3.Distance(player.position, zombie.transform.position);
+            float distance = Vector3.Distance(player.position, candidate.Position);
             if (distance < nearestDistance)
             {
-                nearest = zombie;
+                nearest = candidate;
                 nearestDistance = distance;
             }
         }

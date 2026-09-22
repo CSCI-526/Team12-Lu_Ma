@@ -12769,8 +12769,8 @@ MonoBehaviour:
   zombiesPerWave: 2
   spawnInterval: 2
   spawnIntervalPerWave: 0.2
-  zombieSpeed: 1.6
-  zombieSpeedPerWave: 0.15
+  zombieSpeed: 1.5
+  zombieSpeedPerWave: 0.12
   spawnDistanceMin: 35
   spawnDistanceMax: 45
   spawnLaneHalfWidth: 7

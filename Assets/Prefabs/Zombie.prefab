@@ -139,7 +139,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Zombie
   attackDistance: 1.5
   damagePerHit: 10
-  radiusPerLetter: 0.6
+  radiusPerLetter: 0.75
   label: {fileID: 9013036688259169393}
   ring: {fileID: 2897459959297592427}
 --- !u!1 &4637148948807905426

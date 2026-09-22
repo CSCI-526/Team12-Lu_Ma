@@ -4,7 +4,8 @@
 //   short (3-4 letters), medium (5-7 letters), long (8-12 letters).
 // All words are UPPERCASE A-Z only (no spaces, no punctuation).
 //
-// PickWord() rolls a bucket (about 50% short, 35% medium, 15% long) and tries
+// PickWord() picks a bucket (explosive zombies: long; normal zombies: about
+// 60% short, 40% medium) and tries
 // to return a word whose FIRST LETTER is not already used by an alive zombie,
 // so that typing a first letter always points at exactly one zombie.
 //
@@ -47,24 +48,49 @@ public static class WordBank
         "VENGEANCE", "VIRULENT", "WASTELAND", "WEREWOLF", "YESTERDAY", "ZOMBIFIED"
     };
 
+    // 10-13 letters, hard to spell: only used by the boss's body parts.
+    private static readonly string[] BossWords =
+    {
+        "ANNIHILATION", "ABOMINATION", "BLOODCURDLING", "CATASTROPHIC", "CARNIVOROUS", "DISMEMBERMENT",
+        "DECAPITATION", "EXCRUCIATING", "EXTERMINATION", "FOREBODING", "GHASTLINESS", "HALLUCINATION",
+        "INSATIABLE", "JABBERWOCKY", "LYCANTHROPY", "MALEVOLENCE", "MONSTROSITY", "NECROMANCER",
+        "OBLITERATION", "PUTREFACTION", "PESTILENTIAL", "QUINTESSENCE", "RELENTLESSLY", "SEPULCHRAL",
+        "SUPERNATURAL", "TREACHEROUS", "UNSPEAKABLE", "VENGEFULNESS", "WITCHCRAFT", "WRETCHEDNESS"
+    };
+
+    // Returns a random hard word for a boss part, with a first letter that is
+    // not in usedFirstLetters (the other parts' words), so each part can be
+    // targeted by its first letter.
+    public static string PickBossWord(List<char> usedFirstLetters)
+    {
+        string word = PickWordWithUnusedFirstLetter(BossWords, usedFirstLetters);
+        if (word != null)
+        {
+            return word;
+        }
+        return BossWords[Random.Range(0, BossWords.Length)];
+    }
+
     // Returns a random word for a new zombie.
     // usedFirstLetters = the first letter of every alive zombie's word.
-    public static string PickWord(List<char> usedFirstLetters)
+    // explosive = true for an explosive (elite) zombie: it always gets a long word,
+    // so its word is always longer than a normal zombie's.
+    public static string PickWord(List<char> usedFirstLetters, bool explosive)
     {
-        // 1. Roll the length bucket: 50% short, 35% medium, 15% long.
+        // 1. Pick the length bucket.
+        //    Explosive zombie: always long. Normal zombie: 60% short, 40% medium.
         string[] rolledBucket;
-        float roll = Random.value; // random number from 0 to 1
-        if (roll < 0.50f)
+        if (explosive)
+        {
+            rolledBucket = LongWords;
+        }
+        else if (Random.value < 0.60f)
         {
             rolledBucket = ShortWords;
         }
-        else if (roll < 0.85f)
-        {
-            rolledBucket = MediumWords;
-        }
         else
         {
-            rolledBucket = LongWords;
+            rolledBucket = MediumWords;
         }
 
         // 2. Best case: a word from the rolled bucket with an unused first letter.
@@ -74,20 +100,20 @@ public static class WordBank
             return word;
         }
 
-        // 3. The rolled bucket has no unused first letter left. An unambiguous
-        //    first letter matters more than the word length, so try the other buckets.
-        word = PickWordWithUnusedFirstLetter(ShortWords, usedFirstLetters);
-        if (word == null)
+        // 3. The rolled bucket has no unused first letter left. A normal zombie
+        //    tries the other normal bucket. (An explosive zombie keeps a long word:
+        //    it must stay longer than the normal ones.)
+        if (!explosive)
         {
-            word = PickWordWithUnusedFirstLetter(MediumWords, usedFirstLetters);
-        }
-        if (word == null)
-        {
-            word = PickWordWithUnusedFirstLetter(LongWords, usedFirstLetters);
-        }
-        if (word != null)
-        {
-            return word;
+            word = PickWordWithUnusedFirstLetter(ShortWords, usedFirstLetters);
+            if (word == null)
+            {
+                word = PickWordWithUnusedFirstLetter(MediumWords, usedFirstLetters);
+            }
+            if (word != null)
+            {
+                return word;
+            }
         }
 
         // 4. Every first letter is taken (only with a huge crowd). A duplicate

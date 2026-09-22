@@ -4,6 +4,9 @@
 //   - the game state (Start -> Playing -> Won or Lost)
 //   - score, combo and player health
 //   - starting the game and restarting (reloading the scene)
+//   - pausing (Esc) and resuming with a 3-2-1 countdown. While paused,
+//     Time.timeScale is 0, so everything that uses game time (movement, spawn
+//     timers, boss attacks) freezes; the countdown uses real time.
 //
 // Other scripts reach it through GameManager.Instance, for example:
 //   GameManager.Instance.AddKill();
@@ -20,7 +23,8 @@ public enum GameState
 {
     Start,    // Start panel is showing, waiting for the Start button / Enter
     Playing,  // rail moves, zombies spawn, typing works
-    Won,      // all waves cleared, "You survived" panel is showing
+    Paused,   // Esc was pressed: pause panel, or the 3-2-1 countdown before play resumes
+    Won,     // all waves cleared, "You survived" panel is showing
     Lost      // health reached 0, "You died" panel is showing
 }
 
@@ -54,6 +58,7 @@ public class GameManager : MonoBehaviour
     {
         Instance = this;
         State = GameState.Start;
+        Time.timeScale = 1f; // never start frozen (timeScale survives a scene reload)
     }
 
     private void Start()
@@ -98,6 +103,7 @@ public class GameManager : MonoBehaviour
     // Called by the Restart buttons (wired in the scene) and by StartOrRestart().
     public void RestartGame()
     {
+        Time.timeScale = 1f; // in case we restart from the pause panel
         startImmediatelyAfterReload = true;
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
@@ -113,6 +119,79 @@ public class GameManager : MonoBehaviour
         {
             RestartGame();
         }
+    }
+
+    // ---- Pause ----
+
+    private const int ResumeCountdownSeconds = 3;
+    private Coroutine resumeCountdown; // running while the 3-2-1 countdown is on screen
+
+    // Called by TypingController when Esc is pressed.
+    //   Playing          -> pause
+    //   paused (panel)   -> start the 3-2-1 countdown
+    //   during countdown -> back to the pause panel
+    public void OnPauseKey()
+    {
+        if (State == GameState.Playing)
+        {
+            PauseGame();
+        }
+        else if (State == GameState.Paused)
+        {
+            if (resumeCountdown != null)
+            {
+                PauseGame();
+            }
+            else
+            {
+                ResumeGame();
+            }
+        }
+    }
+
+    public void PauseGame()
+    {
+        if (State != GameState.Playing && State != GameState.Paused)
+        {
+            return;
+        }
+
+        if (resumeCountdown != null)
+        {
+            StopCoroutine(resumeCountdown);
+            resumeCountdown = null;
+        }
+
+        State = GameState.Paused;
+        Time.timeScale = 0f;
+        hud.HideCountdown();
+        hud.ShowPausePanel();
+    }
+
+    // Called by the Resume button (built by HUD) and by OnPauseKey().
+    public void ResumeGame()
+    {
+        if (State != GameState.Paused || resumeCountdown != null)
+        {
+            return;
+        }
+
+        hud.HidePausePanel();
+        resumeCountdown = StartCoroutine(ResumeCountdown());
+    }
+
+    private System.Collections.IEnumerator ResumeCountdown()
+    {
+        for (int number = ResumeCountdownSeconds; number >= 1; number--)
+        {
+            hud.ShowCountdown(number.ToString());
+            yield return new WaitForSecondsRealtime(1f); // real time: game time is frozen
+        }
+
+        hud.HideCountdown();
+        resumeCountdown = null;
+        State = GameState.Playing;
+        Time.timeScale = 1f;
     }
 
     // Called once for every zombie killed (typed or caught in a blast).

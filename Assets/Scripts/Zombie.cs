@@ -1,15 +1,26 @@
 // Zombie.cs
 // ---------------------------------------------------------------------------
-// One zombie: a grey capsule that walks straight at the player, carries a word
-// above its head, and has a blast ring on the ground under it.
+// One zombie: a grey capsule that walks at the player and carries a word.
 //
-// THE TWIST: blastRadius = word length x radiusPerLetter. When the player
-// finishes typing this zombie's word, Explode() kills this zombie AND every
-// other alive zombie standing inside that radius. The ring drawn on the ground
-// uses exactly the same radius, so what you see is what explodes.
+// There are two kinds of zombie:
+//   - NORMAL zombie (grey): typing its word kills only this zombie. No ring.
+//   - EXPLOSIVE zombie (bigger red body + ring on the ground, always a long
+//     word, see WordBank): blastRadius = word length x radiusPerLetter. When
+//     the player finishes typing its word, Explode() kills this zombie AND
+//     every other alive zombie standing inside that radius. The ring uses
+//     exactly the same radius, so what you see is what explodes.
+// WaveSpawner decides which kind each zombie is (see ExplosiveCountForWave).
+//
+// THE WORD is not part of the 3D scene: it is a HUD text (HUD.CreateWordLabel)
+// pinned above the zombie's head by WaveSpawner.LayoutLabels, so other zombies'
+// bodies can never hide it. (The prefab's old world-space "Label" child is
+// switched off.)
+//
+// Zombies keep a little distance from each other while they walk
+// (separationDistance), so they do not melt into one blob.
 //
 // This script lives on the root of the Zombie prefab (Assets/Prefabs/Zombie).
-// The root sits at ground level (y = 0); the capsule, label and ring are children.
+// The root sits at ground level (y = 0); the capsule and ring are children.
 // Keep the root's scale at (1, 1, 1). To resize the zombie, scale the "Body" child
 // instead: scaling the root would also stretch the ring, and then the ring would
 // no longer match the kill radius.
@@ -18,16 +29,22 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
-public class Zombie : MonoBehaviour
+public class Zombie : MonoBehaviour, ITypingTarget
 {
     [Header("Tuning")]
     [SerializeField] private float attackDistance = 1.5f;  // how close it must get to hit the player
     [SerializeField] private int damagePerHit = 10;
-    [SerializeField] private float radiusPerLetter = 0.6f; // blast radius in metres per letter of the word
+    [SerializeField] private float radiusPerLetter = 0.75f; // blast radius in metres per letter of the word (explosive zombies only)
+    [SerializeField] private Color explosiveBodyColor = new Color(0.9f, 0.25f, 0.2f); // body tint of an explosive zombie
+    [SerializeField] private float explosiveBodyScale = 1.5f; // an explosive zombie's body is this many times bigger
+
+    [Header("Spacing")]
+    [SerializeField] private float separationDistance = 1.2f; // wanted gap (metres) between two zombies' bodies
+    [SerializeField] private float separationStrength = 1.5f; // how hard they step away from each other
 
     [Header("References (wired by the scene builder)")]
-    [SerializeField] private TMP_Text label;  // world-space text above the head
-    [SerializeField] private BlastRing ring;  // ring on the ground
+    [SerializeField] private TMP_Text label;  // the prefab's old world-space word; switched off (see header)
+    [SerializeField] private BlastRing ring;  // ring on the ground (hidden on normal zombies)
 
     // Words this long (or longer) get an orange ring instead of a light blue one.
     private const int LongWordLength = 8;
@@ -35,34 +52,70 @@ public class Zombie : MonoBehaviour
     // A zombie this many metres BEHIND the player is removed (see the safety net in Update).
     private const float BehindPlayerDistance = 2f;
 
+    // The word sits this many metres above the top of the head.
+    private const float LabelAboveHead = 0.3f;
+
     // TextMeshPro rich-text colour for the letters typed so far (yellow).
-    private const string TypedColorTag = "<color=#FFD21E>";
+    public const string TypedColorTag = "<color=#FFD21E>";
 
     public string Word { get; private set; }
     public int TypedCount { get; private set; }       // how many letters have been typed so far
-    public float BlastRadius { get; private set; }
+    public float BlastRadius { get; private set; }    // 0 for a normal zombie
+    public bool IsExplosive { get; private set; }
     public bool IsAlive { get; private set; }
     public string ColoredWord { get; private set; }   // the word as rich text: typed part yellow, rest white
+    public float BodyRadius { get; private set; }     // metres, used for spacing
+    public TMP_Text Label { get; private set; }       // the word on the HUD
 
     private float speed;
     private Transform player;
     private WaveSpawner spawner;
-    private Transform cameraTransform;
+    private float headHeight; // metres from the feet to the top of the head
 
     // Called by WaveSpawner right after it creates this zombie.
-    public void Setup(string word, float moveSpeed, Transform playerTransform, WaveSpawner owner)
+    public void Setup(string word, float moveSpeed, Transform playerTransform, WaveSpawner owner, bool explosive)
     {
         Word = word;
         speed = moveSpeed;
         player = playerTransform;
         spawner = owner;
-        cameraTransform = Camera.main.transform;
 
         IsAlive = true;
         TypedCount = 0;
-        BlastRadius = word.Length * radiusPerLetter;
+        IsExplosive = explosive;
 
-        ring.Show(BlastRadius, word.Length >= LongWordLength);
+        // Found by name, because the old Label child has a MeshRenderer too.
+        Transform body = transform.Find("Body");
+
+        if (IsExplosive)
+        {
+            BlastRadius = word.Length * radiusPerLetter;
+            ring.Show(BlastRadius, word.Length >= LongWordLength);
+
+            // Make the body bigger and red so the player can spot the explosive zombie.
+            // Scale the Body child, NOT the root (scaling the root would stretch the ring).
+            // The body's centre is at half its height, so scaling its position as well
+            // keeps its feet on the ground.
+            body.localScale *= explosiveBodyScale;
+            body.localPosition *= explosiveBodyScale;
+
+            // .material makes a copy for this zombie only, so the grey zombies stay grey.
+            body.GetComponent<Renderer>().material.color = explosiveBodyColor;
+        }
+        else
+        {
+            BlastRadius = 0f;
+            ring.gameObject.SetActive(false);
+        }
+
+        // The body is a capsule centred at half its height, 1 metre wide at scale 1.
+        headHeight = body.localPosition.y * 2f;
+        BodyRadius = 0.5f * body.localScale.x;
+
+        // The word lives on the HUD now; the prefab's world-space label is not used.
+        label.gameObject.SetActive(false);
+        Label = spawner.Hud.CreateWordLabel(new Vector2(0.5f, 0f)); // centred, just above the head
+
         RefreshLabel();
     }
 
@@ -73,8 +126,14 @@ public class Zombie : MonoBehaviour
             return;
         }
 
-        // Walk straight toward where the player is right now.
-        transform.position = Vector3.MoveTowards(transform.position, player.position, speed * Time.deltaTime);
+        // Walk toward where the player is right now, stepping away from zombies
+        // that are too close.
+        Vector3 toPlayer = player.position - transform.position;
+        toPlayer.y = 0f;
+        Vector3 direction = toPlayer.normalized + SeparationPush() * separationStrength;
+        direction.y = 0f;
+        direction = Vector3.ClampMagnitude(direction, 1f);
+        transform.position += direction * speed * Time.deltaTime;
 
         // Close enough to bite: hurt the player and disappear.
         if (Vector3.Distance(transform.position, player.position) <= attackDistance)
@@ -94,17 +153,49 @@ public class Zombie : MonoBehaviour
         }
     }
 
-    private void LateUpdate()
+    // Sum of "step away" directions from every zombie that is too close. Each
+    // push is stronger the closer the other zombie is (0 at the wanted distance).
+    private Vector3 SeparationPush()
     {
-        // Not set up yet (for example a Zombie prefab dragged into the scene by hand): do nothing.
-        if (!IsAlive)
+        Vector3 push = Vector3.zero;
+        foreach (Zombie other in spawner.AliveZombies)
         {
-            return;
-        }
+            if (other == this)
+            {
+                continue;
+            }
 
-        // Billboard: copy the camera's rotation so the word always faces the
-        // camera and is never mirrored.
-        label.transform.rotation = cameraTransform.rotation;
+            Vector3 away = transform.position - other.transform.position;
+            away.y = 0f;
+            float distance = away.magnitude;
+            float wanted = BodyRadius + other.BodyRadius + separationDistance;
+            if (distance >= wanted)
+            {
+                continue;
+            }
+
+            if (distance < 0.001f)
+            {
+                away = Random.insideUnitSphere; // exactly on top of each other: pick any direction
+                away.y = 0f;
+                distance = 0.001f;
+            }
+            push += away.normalized * (1f - distance / wanted);
+        }
+        return push;
+    }
+
+    // ---- Word on screen (used by WaveSpawner.LayoutLabels) ----
+
+    public Vector3 LabelAnchor
+    {
+        get { return transform.position + Vector3.up * (headHeight + LabelAboveHead); }
+    }
+
+    // True while this zombie is the player's current target (at least one letter typed).
+    public bool IsTargeted
+    {
+        get { return TypedCount > 0; }
     }
 
     // ---- Typing progress (used by TypingController) ----
@@ -135,9 +226,33 @@ public class Zombie : MonoBehaviour
 
     // ---- Dying ----
 
-    // Called by TypingController when this zombie's word has been fully typed.
+    public Vector3 Position
+    {
+        get { return transform.position; }
+    }
+
+    // Bullets aim at the chest.
+    public Vector3 HitPoint
+    {
+        get { return transform.position + Vector3.up * headHeight * 0.6f; }
+    }
+
+    // Called by the Bullet when it hits (this zombie's word has been fully typed).
+    public void CompleteWord()
+    {
+        Explode();
+    }
+
+    // Kills this zombie, and (explosive zombies only) everything inside the blast radius.
     public void Explode()
     {
+        // A normal zombie has no blast: only it dies.
+        if (!IsExplosive)
+        {
+            Die();
+            return;
+        }
+
         // Let the ring go first, so it survives this zombie and can play its effect.
         ring.PlayBlastEffect();
 
@@ -171,6 +286,7 @@ public class Zombie : MonoBehaviour
         // check IsAlive to know right away that this zombie is gone.
         IsAlive = false;
         spawner.RemoveZombie(this);
+        Destroy(Label.gameObject); // the word is on the HUD, not a child of this zombie
         Destroy(gameObject);
     }
 
@@ -180,6 +296,6 @@ public class Zombie : MonoBehaviour
         string typedPart = Word.Substring(0, TypedCount);
         string remainingPart = Word.Substring(TypedCount);
         ColoredWord = TypedColorTag + typedPart + "</color>" + remainingPart;
-        label.text = ColoredWord;
+        Label.text = ColoredWord;
     }
 }

@@ -3,28 +3,32 @@
 // The "brain" of the game. It owns:
 //   - the game state (Start -> Playing -> Won or Lost)
 //   - score, combo and player health
+//   - the run's statistics (accuracy, speed, best combo...) for the end screen
 //   - starting the game and restarting (reloading the scene)
 //   - pausing (Esc) and resuming with a 3-2-1 countdown. While paused,
 //     Time.timeScale is 0, so everything that uses game time (movement, spawn
 //     timers, boss attacks) freezes; the countdown uses real time.
 //
+// THE COMBO: +1 for every kill, back to 1 on a wrong key or when you get hurt.
+// Each kill is worth 10 x combo points, and every 5 kills in a row earn a
+// power charge (lure bomb or freeze, see Powers). So clean typing pays twice.
+//
 // Other scripts reach it through GameManager.Instance, for example:
 //   GameManager.Instance.AddKill();
 //   if (GameManager.Instance.State == GameState.Playing) { ... }
 //
-// The references below (hud, spawner) are wired automatically by
-// Tools > Blast Radius > Build Prototype Scene.
+// The references below (hud, spawner, powers) are wired in the scene.
 // ---------------------------------------------------------------------------
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-// The four states the game can be in. Most scripts only do their work while Playing.
+// The states the game can be in. Most scripts only do their work while Playing.
 public enum GameState
 {
     Start,    // Start panel is showing, waiting for the Start button / Enter
-    Playing,  // rail moves, zombies spawn, typing works
+    Playing,  // riding, fighting, typing
     Paused,   // Esc was pressed: pause panel, or the 3-2-1 countdown before play resumes
-    Won,     // all waves cleared, "You survived" panel is showing
+    Won,      // the last area was cleared, "You survived" panel is showing
     Lost      // health reached 0, "You died" panel is showing
 }
 
@@ -36,18 +40,28 @@ public class GameManager : MonoBehaviour
     [Header("Tuning")]
     [SerializeField] private int startingHealth = 100;
 
-    [Header("References (wired by the scene builder)")]
+    [Header("References (wired in the scene)")]
     [SerializeField] private HUD hud;
     [SerializeField] private WaveSpawner spawner;
+    [SerializeField] private Powers powers;
 
     // Each kill is worth PointsPerKill x the current combo (x the multi-kill
-    // multiplier when one shot kills several, see AddKills).
+    // multiplier when one blast kills several, see AddKills).
     private const int PointsPerKill = 10;
 
     public GameState State { get; private set; }
     public int Score { get; private set; }
     public int Combo { get; private set; }
     public int Health { get; private set; }
+
+    // The numbers shown on the end screen.
+    public RunStats Stats { get; private set; }
+
+    // The player's powers (lure bomb, freeze).
+    public Powers Powers
+    {
+        get { return powers; }
+    }
 
     // Restart reloads the scene, which would normally show the Start panel again.
     // This flag survives the reload (static fields are not part of the scene) and
@@ -60,6 +74,7 @@ public class GameManager : MonoBehaviour
         Instance = this;
         State = GameState.Start;
         Time.timeScale = 1f; // never start frozen (timeScale survives a scene reload)
+        Stats = new RunStats();
     }
 
     private void Start()
@@ -86,6 +101,16 @@ public class GameManager : MonoBehaviour
         {
             Instance = null;
         }
+    }
+
+    private void Update()
+    {
+        if (State != GameState.Playing)
+        {
+            return;
+        }
+
+        Stats.Seconds += Time.deltaTime;
     }
 
     // Called by the Start button (wired in the scene) and by StartOrRestart().
@@ -195,22 +220,40 @@ public class GameManager : MonoBehaviour
         Time.timeScale = 1f;
     }
 
-    // Called for a single kill (a normal zombie, a boss part, the boss).
-    public void AddKill()
+    // ---- Typing statistics (called by TypingController) ----
+
+    public void OnCorrectKey()
     {
-        AddKills(1);
+        Stats.CorrectKeys += 1;
     }
 
-    // Called with every enemy killed by ONE shot at once (an explosive zombie's
-    // blast can kill several). Each kill is worth PointsPerKill x combo, and the
-    // combo goes up by 1 per kill as usual. MULTI-KILL: when one shot kills
-    // 2 or more, every one of those kills is also multiplied by that number
-    // (3 kills at once = x3 points each), and the HUD shows "TRIPLE KILL!".
-    public void AddKills(int count)
+    // A wrong key: counts against accuracy and resets the combo.
+    public void OnWrongKey()
     {
-        if (count <= 0)
+        Stats.WrongKeys += 1;
+        ResetCombo();
+    }
+
+    // ---- Kills and score ----
+
+    // Called for a single kill (a normal zombie, a boss part, an orb...).
+    // Returns the points it was worth.
+    public int AddKill()
+    {
+        return AddKills(1);
+    }
+
+    // Called with every enemy killed by ONE shot at once (an explosion or a
+    // chain reaction can kill several). Each kill is worth PointsPerKill x combo,
+    // and the combo goes up by 1 per kill as usual. MULTI-KILL: when one shot
+    // kills 2 or more, every one of those kills is also multiplied by that number
+    // (3 kills at once = x3 points each), and the HUD shows "TRIPLE KILL!".
+    // Returns the points gained.
+    public int AddKills(int count)
+    {
+        if (count <= 0 || State == GameState.Lost)
         {
-            return;
+            return 0;
         }
 
         int multiplier = count >= 2 ? count : 1;
@@ -219,9 +262,13 @@ public class GameManager : MonoBehaviour
         {
             gained += PointsPerKill * Combo * multiplier;
             Combo += 1;
+            powers.OnComboChanged(Combo); // every 5 in a row earns a power
         }
 
         Score += gained;
+        Stats.Kills += count;
+        Stats.BestCombo = Mathf.Max(Stats.BestCombo, Combo);
+        Stats.BiggestMultiKill = Mathf.Max(Stats.BiggestMultiKill, count);
         hud.SetScore(Score);
         hud.SetCombo(Combo);
 
@@ -229,16 +276,31 @@ public class GameManager : MonoBehaviour
         {
             hud.ShowMultiKill(count, gained);
         }
+        return gained;
     }
 
     // Called on a wrong key, and when the player takes damage.
     public void ResetCombo()
     {
+        if (Combo == 1)
+        {
+            return;
+        }
         Combo = 1;
         hud.SetCombo(Combo);
+        powers.OnComboChanged(Combo);
     }
 
-    // Called by a zombie that reached the player.
+    // ---- Health ----
+
+    // Gives health back (never above the starting health). Used by supply crates.
+    public void Heal(int amount)
+    {
+        Health = Mathf.Min(startingHealth, Health + amount);
+        hud.SetHealth(Health, startingHealth);
+    }
+
+    // Called by a zombie that reached the player, and by a boss orb that hit.
     public void TakeDamage(int amount)
     {
         if (State != GameState.Playing)
@@ -251,26 +313,41 @@ public class GameManager : MonoBehaviour
         {
             Health = 0;
         }
+        Stats.DamageTaken += amount;
         hud.SetHealth(Health, startingHealth);
+        hud.FlashRed();
+        CameraDirector.Shake(0.45f);
         ResetCombo();
 
         if (Health <= 0)
         {
-            State = GameState.Lost;
-            spawner.StopWaves();
-            hud.ShowLostPanel(Score);
+            EndGame(false);
         }
     }
 
-    // Called by WaveSpawner when the last wave has been cleared.
+    // ---- The end ----
+
+    // Called by WaveSpawner when the last area has been cleared.
     public void WinGame()
+    {
+        EndGame(true);
+    }
+
+    private void EndGame(bool won)
     {
         if (State != GameState.Playing)
         {
             return;
         }
 
-        State = GameState.Won;
-        hud.ShowWonPanel(Score);
+        State = won ? GameState.Won : GameState.Lost;
+        if (!won)
+        {
+            spawner.StopWaves();
+        }
+
+        Stats.Score = Score;
+        Stats.Won = won;
+        hud.ShowResults(won, Stats);
     }
 }

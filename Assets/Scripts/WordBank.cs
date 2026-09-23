@@ -5,10 +5,11 @@
 // All words are UPPERCASE A-Z only (no spaces, no punctuation); the game shows
 // them in lowercase (see Zombie.RefreshLabel). Orb words are the exception.
 //
-// PickWord() picks a bucket (explosive zombies: long; normal zombies: about
-// 60% short, 40% medium) and tries
-// to return a word whose FIRST LETTER is not already used by an alive zombie,
-// so that typing a first letter always points at exactly one zombie.
+// PickWord() picks a bucket by zombie kind (explosive: long; runner: short;
+// armored: medium; normal: about 60% short, 40% medium) and tries to return a
+// word whose FIRST LETTER is not already used by anything on screen, so that
+// typing a first letter always points at exactly one target.
+// Barrels, supply crates and armour have their own word lists further down.
 //
 // To add words: just add them to the right list below. Keep them uppercase
 // and keep each word inside its bucket's length range.
@@ -93,10 +94,82 @@ public static class WordBank
     private static readonly string[] OrbWords =
     {
         "Zap!", "Hex#", "B00m", "Fry!", "Rot?", "@Burn", "#Doom", "$Void", "Kr4ck", "Sp@rk",
-        "Fl4re", "Vo1t", "!Hit", "&Fear", "*Ash", "%Rip", "Nuk3", "Sh0ck", "Ion+", "Jolt!",
-        "Qu@ke", "Wisp~", "Emb3r", "Tox1c", "Omen!", "Pyr0", "Lava*", "Mana=", "Ray^", "EMP!",
-        "Xen0n", "yELL", "dOOm", "cRaCk", "gl0w", "uRGe", "HeX", "Z4p", "k1LL", "BuRn!"
+        "Fl4re", "V0lt", "!Hit", "&Fear", "*Ash", "%Rip", "Nuk3", "Sh0ck", "Ion+", "Jolt!",
+        "Qu@ke", "Wisp~", "Emb3r", "T0xic", "Omen!", "Pyr0", "Lava*", "Mana=", "Ray^", "EMP!",
+        "Xen0n", "yELL", "dOOm", "cRaCk", "gl0w", "uRGe", "HeX", "Z4p", "k!LL", "BuRn!"
     };
+    // (No orb word may contain '1' or '2': those keys throw a lure bomb / freeze, see Powers.)
+
+    // Armored zombies: the FIRST word breaks the armour (then the zombie gets a normal word).
+    private static readonly string[] ArmorWords =
+    {
+        "IRON", "STEEL", "PLATE", "BOLT", "RIVET", "SHIELD", "HELMET", "CHAIN", "ANVIL", "TIN",
+        "COPPER", "BRASS", "NICKEL", "ZINC", "LEAD", "MAIL", "GUARD", "VISOR", "KNIGHT", "ALLOY",
+        "EMBLEM", "FORGE", "WELD", "QUILT", "OAK", "DENT", "HULL", "JOUST", "UNBENT", "YOKE"
+    };
+
+    // Explosive barrels (orange words).
+    private static readonly string[] BarrelWords =
+    {
+        "FUEL", "GAS", "OIL", "TNT", "BOOM", "BLAST", "NAPALM", "PROPANE", "DIESEL", "KABOOM",
+        "PETROL", "METHANE", "NITRO", "BUTANE", "KEROSENE", "DYNAMITE", "HAZARD", "IGNITE",
+        "VOLATILE", "WARNING", "ACID", "JETFUEL", "LIGHTER", "ETHANOL", "RUMBLE", "SPARK",
+        "UNSTABLE", "CRUDE", "ZAPPER", "YIKES", "QUAKE"
+    };
+
+    // Supply crates (green words). The word tells you what is inside.
+    private static readonly string[] HealthCrateWords =
+    {
+        "MEDKIT", "BANDAGE", "HEALTH", "FIRSTAID", "PILLS", "TONIC", "REMEDY", "CURE", "VITAMIN",
+        "SPLINT", "GAUZE", "ANTIDOTE", "ELIXIR", "OINTMENT", "NURSE", "DOCTOR", "LIFE", "KIT"
+    };
+    private static readonly string[] LureCrateWords =
+    {
+        "LURE", "BAIT", "DECOY", "SIREN", "MAGNET", "WHISTLE", "CHUM", "TRAP", "HONEY", "RATTLE",
+        "GRENADE", "BOMB", "ALARM", "NOISE", "FIRECRACKER", "PINATA", "UKULELE", "EGGTIMER"
+    };
+    private static readonly string[] FreezeCrateWords =
+    {
+        "FREEZE", "ICE", "FROST", "CHILL", "COLD", "BLIZZARD", "SNOW", "POLAR", "GLACIER", "WINTER",
+        "ARCTIC", "ICICLE", "TUNDRA", "HAIL", "SLEET", "KELVIN", "YETI", "DEEPFREEZE", "NORTH", "VORTEX"
+    };
+
+    // Returns a random word for an explosive barrel (first letter avoids usedFirstLetters if possible).
+    public static string PickBarrelWord(List<char> usedFirstLetters)
+    {
+        return PickFrom(BarrelWords, usedFirstLetters);
+    }
+
+    // Returns a random word for a supply crate of this kind.
+    public static string PickCrateWord(SupplyKind kind, List<char> usedFirstLetters)
+    {
+        if (kind == SupplyKind.Health)
+        {
+            return PickFrom(HealthCrateWords, usedFirstLetters);
+        }
+        if (kind == SupplyKind.Lure)
+        {
+            return PickFrom(LureCrateWords, usedFirstLetters);
+        }
+        return PickFrom(FreezeCrateWords, usedFirstLetters);
+    }
+
+    // Returns the first word of an armored zombie (breaks its armour).
+    public static string PickArmorWord(List<char> usedFirstLetters)
+    {
+        return PickFrom(ArmorWords, usedFirstLetters);
+    }
+
+    // A word from list with an unused first letter if there is one, otherwise any word from list.
+    private static string PickFrom(string[] list, List<char> usedFirstLetters)
+    {
+        string word = PickWordWithUnusedFirstLetter(list, usedFirstLetters);
+        if (word != null)
+        {
+            return word;
+        }
+        return list[Random.Range(0, list.Length)];
+    }
 
     // Returns a random energy-orb word whose first character (ignoring case) is
     // not in usedFirstLetters, so typing it never picks a boss part by mistake.
@@ -132,18 +205,27 @@ public static class WordBank
         return BossWords[Random.Range(0, BossWords.Length)];
     }
 
-    // Returns a random word for a new zombie.
-    // usedFirstLetters = the first letter of every alive zombie's word.
-    // explosive = true for an explosive (elite) zombie: it always gets a long word,
-    // so its word is always longer than a normal zombie's.
-    public static string PickWord(List<char> usedFirstLetters, bool explosive)
+    // Returns a random word for a new zombie of this kind.
+    // usedFirstLetters = the first letter of every word that can be typed right now.
+    // An explosive zombie always gets a long word (a long word = a big blast), a
+    // runner a short one (it is fast, so it must be quick to type).
+    public static string PickWord(List<char> usedFirstLetters, ZombieKind kind)
     {
+        bool explosive = kind == ZombieKind.Explosive;
+
         // 1. Pick the length bucket.
-        //    Explosive zombie: always long. Normal zombie: 60% short, 40% medium.
         string[] rolledBucket;
         if (explosive)
         {
             rolledBucket = LongWords;
+        }
+        else if (kind == ZombieKind.Runner)
+        {
+            rolledBucket = ShortWords;
+        }
+        else if (kind == ZombieKind.Armored)
+        {
+            rolledBucket = MediumWords;
         }
         else if (Random.value < 0.60f)
         {

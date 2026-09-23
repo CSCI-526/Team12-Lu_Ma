@@ -1,25 +1,28 @@
 // TypingController.cs
 // ---------------------------------------------------------------------------
-// The ONLY input in the game: reads the keyboard and turns letters into kills.
+// The ONLY input in the game: reads the keyboard and turns letters into shots.
 //
 // Rules:
-//   - No target yet: the typed letter picks the NEAREST alive zombie or boss
-//     part (see ITypingTarget) whose word starts with that letter, and counts
-//     as that word's first letter. If nothing matches, it is a wrong key.
+//   - No target yet: the typed letter picks the NEAREST target (zombie, boss
+//     part, energy orb, barrel, supply crate, quiz answer - see ITypingTarget)
+//     whose word starts with that letter, and counts as its first letter.
+//     If nothing matches, it is a wrong key.
 //   - Target exists: the next expected letter advances the word. Any other
 //     letter is a wrong key.
-//   - Zombie and boss-part words are stored UPPERCASE, shown in lowercase, and
-//     typing them is case-insensitive.
-//     The boss's energy orb words (e.g. "Sp@rk") are case-sensitive and may
-//     contain digits and symbols, which must be typed exactly. Digits and
-//     symbols are ignored while no orb is around.
-//   - A wrong key never resets progress. It flashes the screen red and resets
-//     the combo.
+//   - EVERY correct letter fires a bullet at the target (it makes a zombie
+//     stagger). The LAST letter fires the killing shot: when that bullet hits,
+//     it calls CompleteWord() (a zombie dies or explodes, a barrel blows up...).
+//   - Words are stored UPPERCASE, shown in lowercase, and typing them is
+//     case-insensitive. The boss's energy orb words (e.g. "Sp@rk") are
+//     case-sensitive and may contain digits and symbols, which must be typed
+//     exactly. Digits and symbols are ignored while no orb is around.
+//   - A wrong key never resets progress. The screen flashes red and the
+//     combo resets.
+//   - 1 throws a lure bomb, 2 uses the freeze power (see Powers). No word
+//     contains those two keys, so they never clash with typing.
 //   - Backspace drops the current target so the player can retarget.
 //   - Escape pauses the game (and resumes it from the pause panel, see
-//     GameManager.OnPauseKey). Letters typed while paused are ignored.
-//   - Finishing the word fires a Bullet at the target. When it hits, it calls
-//     CompleteWord(): a zombie dies or explodes, a boss part breaks.
+//     GameManager.OnPauseKey). Keys typed while paused are ignored.
 //   - Enter starts the game from the Start panel, and restarts it from the
 //     "You survived" / "You died" panels.
 //
@@ -35,13 +38,22 @@ using UnityEngine.InputSystem;
 
 public class TypingController : MonoBehaviour
 {
-    [Header("References (wired by the scene builder)")]
+    [Header("References (wired in the scene)")]
     [SerializeField] private WaveSpawner spawner;
     [SerializeField] private Transform player;
     [SerializeField] private HUD hud;
 
-    // The zombie or boss part whose word is currently being typed (null = no target).
+    private const char LureKey = '1';
+    private const char FreezeKey = '2';
+
+    // The target whose word is currently being typed (null = no target).
     private ITypingTarget target;
+
+    // The target being typed right now (null = none). The camera turns toward it.
+    public ITypingTarget CurrentTarget
+    {
+        get { return target; }
+    }
 
 #if ENABLE_INPUT_SYSTEM
     private Keyboard keyboard;        // the keyboard we are listening to
@@ -116,7 +128,7 @@ public class TypingController : MonoBehaviour
             return;
         }
 
-        // ---- 4. Forget a target that is gone (it reached the player) ----
+        // ---- 4. Forget a target that is gone (it reached the player, got blown up...) ----
         if (target != null && !target.IsAlive)
         {
             target = null;
@@ -137,8 +149,20 @@ public class TypingController : MonoBehaviour
                 continue; // Enter, Backspace, space, ...: never part of a word
             }
 
+            // The power keys.
+            if (character == LureKey)
+            {
+                GameManager.Instance.Powers.TryUseLure();
+                continue;
+            }
+            if (character == FreezeKey)
+            {
+                GameManager.Instance.Powers.TryUseFreeze();
+                continue;
+            }
+
             // Digits and symbols only matter while an energy orb (a case-sensitive
-            // word) is around; otherwise they are ignored, as before.
+            // word) is around; otherwise they are ignored.
             char upper = char.ToUpperInvariant(character);
             bool isLetter = upper >= 'A' && upper <= 'Z';
             if (!isLetter && !SymbolsMatter())
@@ -205,10 +229,13 @@ public class TypingController : MonoBehaviour
         if (Matches(target, typed, target.NextLetter))
         {
             target.AdvanceProgress();
-            if (target.IsWordComplete)
+            GameManager.Instance.OnCorrectKey();
+
+            // Every correct letter is a shot; the last one is the killing shot.
+            bool finalShot = target.IsWordComplete;
+            Bullet.Fire(target, finalShot);
+            if (finalShot)
             {
-                // Shoot it: the kill happens when the bullet hits (see Bullet).
-                Bullet.Fire(target);
                 target = null;
             }
         }
@@ -221,12 +248,12 @@ public class TypingController : MonoBehaviour
     private void WrongKey()
     {
         // Progress is NOT reset; the player only loses the combo.
-        GameManager.Instance.ResetCombo();
+        GameManager.Instance.OnWrongKey();
         hud.FlashRed();
     }
 
-    // Returns the alive target (zombie, boss part or energy orb) closest to the
-    // player whose word starts with the typed character, or null if there is none.
+    // Returns the alive target closest to the player whose word starts with the
+    // typed character, or null if there is none.
     private ITypingTarget FindNearestTargetStartingWith(char typed)
     {
         ITypingTarget nearest = null;

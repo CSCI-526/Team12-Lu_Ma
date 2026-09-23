@@ -1,75 +1,63 @@
 // Bullet.cs
 // ---------------------------------------------------------------------------
-// When the player finishes typing a word, TypingController fires a Bullet
-// (Bullet.Fire) from the player's "gun" (a point just below and to the right of
-// the camera) at that target. The bullet homes in on the target, so it always
-// hits even though the zombie keeps walking, and ON IMPACT calls
-// target.CompleteWord(): only then does the zombie die / explode, or the boss
-// part break.
+// Every correct letter the player types fires a Bullet (Bullet.Fire) from a
+// point just below the camera at the target. The bullet homes in on the target, so it always
+// hits even though zombies keep walking.
+//   - A normal shot (any letter but the last) makes a zombie stagger (Flinch).
+//   - The FINAL shot (the last letter) is bigger, and ON IMPACT it calls
+//     target.CompleteWord(): only then does the zombie die / explode, the
+//     barrel blow up, the boss part break...
 //
 // If the target is already gone when the bullet gets there (caught in another
-// zombie's blast, or it reached the player), the bullet simply disappears.
+// blast, or it reached the player), the bullet simply disappears.
 //
-// It is built entirely in code (a small glowing sphere with a short trail), so
+// It is built entirely in code (a small flat-coloured sphere with a short trail), so
 // it needs no prefab.
 // ---------------------------------------------------------------------------
 using UnityEngine;
 
 public class Bullet : MonoBehaviour
 {
-    private const float Speed = 60f;          // metres per second
-    private const float Size = 0.15f;         // sphere diameter in metres
-    private const float TrailSeconds = 0.08f; // how long the tracer trail is
+    private const float Speed = 70f;          // metres per second
+    private const float Size = 0.08f;         // sphere diameter in metres (normal shot)
+    private const float FinalSize = 0.16f;    // the killing shot is bigger
+    private const float TrailSeconds = 0.06f; // how long the tracer trail is
     private const float MaxLifetime = 3f;     // safety net: never fly forever
 
-    // Where the gun sits, relative to the camera (right, up, forward), in metres.
-    private static readonly Vector3 MuzzleOffset = new Vector3(0.35f, -0.35f, 0.6f);
+    // Where shots start, relative to the camera (right, up, forward), in metres.
+    private static readonly Vector3 StartOffset = new Vector3(0f, -0.4f, 0.6f);
 
     private static readonly Color BulletColor = new Color(1f, 0.85f, 0.3f);
-    private static Material sharedMaterial; // one material for every bullet
 
     private ITypingTarget target;
+    private bool finalShot;
+    private Vector3 flyDirection;
     private float age;
 
-    // Fires a bullet from the gun at the target.
-    public static void Fire(ITypingTarget target)
+    // Fires a bullet from just below the camera at the target. finalShot = the last letter of the word.
+    public static void Fire(ITypingTarget target, bool finalShot)
     {
+        Vector3 aim = target.HitPoint;
         Transform cameraTransform = Camera.main.transform;
-        Vector3 muzzle = cameraTransform.TransformPoint(MuzzleOffset);
+        Vector3 start = cameraTransform.TransformPoint(StartOffset);
+        CameraDirector.Kick(finalShot ? 1f : 0.3f); // a small kick of the view
+        float size = finalShot ? FinalSize : Size;
 
-        GameObject bulletObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        bulletObject.name = "Bullet";
-        Destroy(bulletObject.GetComponent<Collider>()); // it hits by distance, not physics
-        bulletObject.transform.position = muzzle;
-        bulletObject.transform.localScale = Vector3.one * Size;
-        bulletObject.GetComponent<Renderer>().sharedMaterial = GetMaterial();
+        // Shapes.Block with no parent: a sphere without a collider (it hits by distance).
+        GameObject bulletObject = Shapes.Block(PrimitiveType.Sphere, "Bullet", null, start,
+            Vector3.one * size, Palette.Unlit(BulletColor));
 
         TrailRenderer trail = bulletObject.AddComponent<TrailRenderer>();
         trail.time = TrailSeconds;
-        trail.startWidth = Size;
+        trail.startWidth = size;
         trail.endWidth = 0f;
-        trail.sharedMaterial = GetMaterial();
+        trail.sharedMaterial = Palette.Unlit(BulletColor);
+        trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         Bullet bullet = bulletObject.AddComponent<Bullet>();
         bullet.target = target;
-    }
-
-    // An unlit (always bright) yellow material, created once. URP's Unlit shader
-    // is used because this project renders with URP; it is already in the build
-    // because the blast ring materials use it.
-    private static Material GetMaterial()
-    {
-        if (sharedMaterial == null)
-        {
-            Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (shader == null)
-            {
-                shader = Shader.Find("Sprites/Default");
-            }
-            sharedMaterial = new Material(shader);
-            sharedMaterial.color = BulletColor;
-        }
-        return sharedMaterial;
+        bullet.finalShot = finalShot;
+        bullet.flyDirection = (aim - start).normalized;
     }
 
     private void Update()
@@ -97,6 +85,7 @@ public class Bullet : MonoBehaviour
             Hit();
             return;
         }
+        flyDirection = (aim - transform.position).normalized;
         transform.position = Vector3.MoveTowards(transform.position, aim, step);
     }
 
@@ -105,7 +94,19 @@ public class Bullet : MonoBehaviour
         // Only count the hit while the game is on (not after the player died).
         if (GameManager.Instance.State == GameState.Playing)
         {
-            target.CompleteWord();
+            if (finalShot)
+            {
+                target.CompleteWord();
+            }
+            else
+            {
+                // A zombie staggers; other targets just take the hit.
+                Zombie zombie = target as Zombie;
+                if (zombie != null)
+                {
+                    zombie.Flinch(flyDirection);
+                }
+            }
         }
         Destroy(gameObject);
     }

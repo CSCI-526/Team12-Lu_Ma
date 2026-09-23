@@ -1,23 +1,27 @@
 // Boss.cs
 // ---------------------------------------------------------------------------
-// The boss of a boss wave (every bossEveryWaves-th wave, see WaveSpawner).
-// It is built entirely in code (Boss.Create), so it needs no prefab: a big
-// grey figure made of a torso plus 5 typeable parts -- head, 2 arms, 2 legs.
-// The torso, arms and legs are capsules, the same shape as a zombie's body;
-// the head is a sphere.
+// The boss of the last area (see Level and WaveSpawner). It is built entirely
+// in code (Boss.Create), so it needs no prefab: a big grey figure made of a
+// torso plus 5 typeable parts -- head, 2 arms, 2 legs. The torso, arms and legs
+// are capsules, the same shape as a zombie's body; the head is a sphere.
 //
 // Fight rules:
 //   - Every part carries a hard word (WordBank.PickBossWord). Typing a part's
 //     word BREAKS that part (it turns dark) and deals partDamage to the boss.
-//   - Breaking ALL 5 parts deals a big extra hit (allPartsBonusDamage). If the
-//     boss is still alive, the parts regrow with new words after regrowSeconds.
-//     With the default numbers one full round (5 x 100 + 400 = 900) kills it.
+//   - QUIZ: when ALL 5 parts are broken the boss is stunned and asks a question
+//     (QuizBank) with 3 answers floating in front of it (QuizAnswer). Type the
+//     RIGHT answer: critical hit (quizCorrectDamage). A WRONG answer heals it
+//     (quizWrongHeal) and it fires an orb at once. Too slow: nothing happens.
+//     Then the parts regrow with new words after regrowSeconds.
+//     With the default numbers one perfect round (5 x 100 + 400 = 900) kills it.
 //   - Every attackInterval seconds the boss fires an EnergyOrb at the player.
 //     Its body slowly turns red during the last attackWarningSeconds, as a warning.
 //     The orb carries a short, case-sensitive word with symbols (e.g. "Sp@rk"):
 //     typing it shoots the orb down; if it arrives (after orbFlightSeconds) the
-//     player takes attackDamage.
-//   - Health 0 = boss dies. WaveSpawner waits for that, then the rail moves on.
+//     player takes attackDamage. Below half health it gets ANGRY: orbs come faster.
+//   - Explosions next to it hurt it (barrels, lure bombs: TakeBlastDamage).
+//   - The freeze power stops its attacks (and the quiz timer).
+//   - Health 0 = boss dies (it shrinks into the ground). WaveSpawner waits for that.
 // The red health bar at the top of the screen is drawn by HUD (ShowBossBar).
 // The parts' words are HUD texts too, placed by WaveSpawner.LayoutLabels.
 // ---------------------------------------------------------------------------
@@ -31,11 +35,16 @@ public class Boss : MonoBehaviour
     [Header("Health")]
     [SerializeField] private float maxHealth = 900f;
     [SerializeField] private float partDamage = 100f;           // damage for each part's word
-    [SerializeField] private float allPartsBonusDamage = 400f;  // extra damage when all 5 parts are broken
     [SerializeField] private float regrowSeconds = 1.5f;        // pause before broken parts come back
+
+    [Header("Quiz")]
+    [SerializeField] private float quizSeconds = 10f;           // time to type an answer
+    [SerializeField] private float quizCorrectDamage = 400f;    // critical hit for the right answer
+    [SerializeField] private float quizWrongHeal = 150f;        // the boss heals this much on a wrong answer
 
     [Header("Attack")]
     [SerializeField] private float attackInterval = 8f;         // seconds between energy orbs (0 = never attacks)
+    [SerializeField] private float angryAttackInterval = 5.5f;  // below half health
     [SerializeField] private int attackDamage = 15;             // damage if an orb reaches the player
     [SerializeField] private float attackWarningSeconds = 3f;   // the body turns red over this many seconds before an orb
     [SerializeField] private float orbFlightSeconds = 5f;       // time the player has to type the orb's word
@@ -51,36 +60,54 @@ public class Boss : MonoBehaviour
     public float Health { get; private set; }
 
     private readonly List<BossPart> parts = new List<BossPart>();
-    private readonly List<EnergyOrb> orbs = new List<EnergyOrb>(); // orbs fired and still in the air
+    private readonly List<EnergyOrb> orbs = new List<EnergyOrb>();       // orbs fired and still in the air
+    private readonly List<QuizAnswer> answers = new List<QuizAnswer>();  // the quiz answers on screen
     private Renderer torso;
     private HUD hud;
+    private WaveSpawner spawner;
     private Vector3 homePosition;  // where the boss stands (shaking moves it around this point)
     private float attackTimer;
     private float shakeTimer;
     private bool regrowing;
+    private bool stunned;          // the quiz is on
+    private bool angry;
 
-    // Builds a boss standing at position (on the ground, facing the player).
-    // baseMaterial is copied for every block, then tinted.
-    public static Boss Create(Vector3 position, Material baseMaterial, HUD hud)
+    // The quiz answer the player chose (set by OnQuizAnswer while the quiz is open).
+    private bool quizOpen;
+    private QuizAnswer chosenAnswer;
+
+    // Builds the boss standing at stand (on the ground), facing the player at playerPosition.
+    public static Boss Create(Vector3 stand, Vector3 playerPosition, WaveSpawner owner, HUD hud)
     {
         GameObject root = new GameObject("Boss");
-        root.transform.position = position;
+        root.transform.position = stand;
+
+        // The boss's local -Z must face the player (the parts and their words
+        // are laid out that way): its forward (+Z) points AWAY from the player.
+        Vector3 away = stand - playerPosition;
+        away.y = 0f;
+        if (away.sqrMagnitude > 0.001f)
+        {
+            root.transform.rotation = Quaternion.LookRotation(away);
+        }
+
         Boss boss = root.AddComponent<Boss>();
-        boss.Build(baseMaterial, hud);
+        boss.spawner = owner;
+        boss.Build(hud);
         return boss;
     }
 
-    private void Build(Material baseMaterial, HUD hudRef)
+    private void Build(HUD hudRef)
     {
         hud = hudRef;
         homePosition = transform.position;
         Health = maxHealth;
         IsAlive = true;
 
-        // Body layout, in metres, relative to the boss's feet. The player looks
-        // along +Z, so -X is the player's left and -Z is the side facing the player.
+        // Body layout, in metres, relative to the boss's feet. -X is the player's
+        // left and -Z is the side facing the player.
         // A Unity capsule is 1 m wide and 2 m tall at scale 1, centred on its middle.
-        torso = CreateBlock("Torso", PrimitiveType.Capsule, new Vector3(0f, 4f, 0f), new Vector3(2.4f, 1.5f, 1.4f), baseMaterial);
+        torso = CreateBlock("Torso", PrimitiveType.Capsule, new Vector3(0f, 4f, 0f), new Vector3(2.4f, 1.5f, 1.4f));
 
         // Each word's pivot says which side of its anchor point it sits on:
         // the head's word is centred above it, left-side words end at their
@@ -90,45 +117,41 @@ public class Boss : MonoBehaviour
         Vector2 toTheRight = new Vector2(0f, 0.5f);
 
         AddPart("Head", PrimitiveType.Sphere, new Vector3(0f, 6.3f, 0f), new Vector3(1.6f, 1.6f, 1.6f),
-            new Vector3(0f, 7.4f, -0.8f), above, baseMaterial);
+            new Vector3(0f, 7.4f, -0.8f), above);
         AddPart("LeftArm", PrimitiveType.Capsule, new Vector3(-1.75f, 4f, 0f), new Vector3(0.8f, 1.4f, 0.8f),
-            new Vector3(-2.35f, 4.2f, -0.8f), toTheLeft, baseMaterial);
+            new Vector3(-2.35f, 4.2f, -0.8f), toTheLeft);
         AddPart("RightArm", PrimitiveType.Capsule, new Vector3(1.75f, 4f, 0f), new Vector3(0.8f, 1.4f, 0.8f),
-            new Vector3(2.35f, 4.2f, -0.8f), toTheRight, baseMaterial);
+            new Vector3(2.35f, 4.2f, -0.8f), toTheRight);
         AddPart("LeftLeg", PrimitiveType.Capsule, new Vector3(-0.6f, 1.3f, 0f), new Vector3(0.9f, 1.3f, 0.9f),
-            new Vector3(-1.2f, 1f, -0.8f), toTheLeft, baseMaterial);
+            new Vector3(-1.2f, 1f, -0.8f), toTheLeft);
         AddPart("RightLeg", PrimitiveType.Capsule, new Vector3(0.6f, 1.3f, 0f), new Vector3(0.9f, 1.3f, 0.9f),
-            new Vector3(1.2f, 1f, -0.8f), toTheRight, baseMaterial);
+            new Vector3(1.2f, 1f, -0.8f), toTheRight);
 
         GiveEveryPartANewWord();
         hud.SetBossHealth(Health, maxHealth);
     }
 
-    private Renderer CreateBlock(string blockName, PrimitiveType shape, Vector3 localPosition, Vector3 localScale, Material baseMaterial)
+    // Every block gets its OWN copy of a lit material, because its colour
+    // changes on its own (red warning, broken part, frozen).
+    private Renderer CreateBlock(string blockName, PrimitiveType shape, Vector3 localPosition, Vector3 localScale)
     {
-        GameObject block = GameObject.CreatePrimitive(shape);
-        block.name = blockName;
-        Destroy(block.GetComponent<Collider>()); // nothing in this game uses physics
-        block.transform.SetParent(transform, false);
-        block.transform.localPosition = localPosition;
-        block.transform.localScale = localScale;
-
+        GameObject block = Shapes.Block(shape, blockName, transform, localPosition, localScale, Palette.Lit(bodyColor));
         Renderer blockRenderer = block.GetComponent<Renderer>();
-        blockRenderer.material = new Material(baseMaterial);
-        blockRenderer.material.color = bodyColor;
+        blockRenderer.material = new Material(Palette.Lit(bodyColor));
         return blockRenderer;
     }
 
-    private void AddPart(string partName, PrimitiveType shape, Vector3 localPosition, Vector3 localScale,
-        Vector3 labelLocalPosition, Vector2 labelPivot, Material baseMaterial)
+    private Renderer AddPart(string partName, PrimitiveType shape, Vector3 localPosition, Vector3 localScale,
+        Vector3 labelLocalPosition, Vector2 labelPivot)
     {
-        Renderer block = CreateBlock(partName, shape, localPosition, localScale, baseMaterial);
+        Renderer block = CreateBlock(partName, shape, localPosition, localScale);
         TMP_Text label = hud.CreateWordLabel(labelPivot);
         parts.Add(new BossPart(this, block, label, labelLocalPosition));
+        return block;
     }
 
-    // Adds every part and energy orb that can still be typed to the list
-    // (used by WaveSpawner.GetTypingTargets).
+    // Adds every part, energy orb and quiz answer that can still be typed to
+    // the list (used by WaveSpawner.GetTypingTargets).
     public void AddTypeableParts(List<ITypingTarget> targets)
     {
         foreach (BossPart part in parts)
@@ -144,6 +167,20 @@ public class Boss : MonoBehaviour
         {
             targets.Add(orb);
         }
+
+        foreach (QuizAnswer answer in answers)
+        {
+            if (answer.IsAlive)
+            {
+                targets.Add(answer);
+            }
+        }
+    }
+
+    // The middle of the boss's body (explosions measure from here).
+    public Vector3 BodyCenter
+    {
+        get { return transform.position + Vector3.up * 3f; }
     }
 
     private void Update()
@@ -153,7 +190,11 @@ public class Boss : MonoBehaviour
             return;
         }
 
-        UpdateAttack();
+        if (!stunned && !Powers.IsFrozen)
+        {
+            UpdateAttack();
+        }
+        UpdateColors();
         UpdateShake();
     }
 
@@ -161,20 +202,37 @@ public class Boss : MonoBehaviour
 
     private void UpdateAttack()
     {
-        if (attackInterval <= 0f)
+        float interval = angry ? angryAttackInterval : attackInterval;
+        if (interval <= 0f)
         {
             return;
         }
 
         attackTimer += Time.deltaTime;
-
-        // Warning: 0 until the last attackWarningSeconds, then rises to 1 at the hit.
-        float warning = 0f;
-        if (attackWarningSeconds > 0f)
+        if (attackTimer >= interval)
         {
-            warning = Mathf.Clamp01((attackTimer - (attackInterval - attackWarningSeconds)) / attackWarningSeconds);
+            attackTimer = 0f;
+            LaunchOrb();
+            Shake();
         }
-        Color color = Color.Lerp(bodyColor, attackColor, warning);
+    }
+
+    // The body colour: grey, turning red before an attack (the warning),
+    // icy blue while frozen. Broken parts stay dark.
+    private void UpdateColors()
+    {
+        Color color = bodyColor;
+        if (Powers.IsFrozen)
+        {
+            color = Palette.FrozenIce;
+        }
+        else if (!stunned && attackWarningSeconds > 0f)
+        {
+            float interval = angry ? angryAttackInterval : attackInterval;
+            float warning = Mathf.Clamp01((attackTimer - (interval - attackWarningSeconds)) / attackWarningSeconds);
+            color = Color.Lerp(bodyColor, attackColor, warning);
+        }
+
         torso.material.color = color;
         foreach (BossPart part in parts)
         {
@@ -183,49 +241,21 @@ public class Boss : MonoBehaviour
                 part.SetColor(color);
             }
         }
-
-        if (attackTimer >= attackInterval)
-        {
-            attackTimer = 0f;
-            LaunchOrb();
-            Shake();
-        }
     }
 
     // Fires an energy orb from the boss's chest at the player. Its word never
-    // starts with the same letter as a standing part or another orb, so the
-    // first key always picks exactly one target.
+    // starts with the same letter as anything else on screen, so the first key
+    // always picks exactly one target.
     private void LaunchOrb()
     {
         Vector3 chest = transform.TransformPoint(new Vector3(0f, 4.5f, -1.2f));
-        string word = WordBank.PickOrbWord(UsedFirstLetters());
+        string word = WordBank.PickOrbWord(spawner.UsedFirstLetters());
         orbs.Add(EnergyOrb.Launch(chest, word, orbFlightSeconds, attackDamage, hud));
     }
 
-    // First letters (UPPERCASE) of every word the player could type right now:
-    // standing parts and orbs in the air.
-    private List<char> UsedFirstLetters()
-    {
-        List<char> used = new List<char>();
-        foreach (BossPart part in parts)
-        {
-            if (!part.IsBroken)
-            {
-                used.Add(char.ToUpperInvariant(part.Word[0]));
-            }
-        }
-        foreach (EnergyOrb orb in orbs)
-        {
-            if (orb.IsAlive)
-            {
-                used.Add(char.ToUpperInvariant(orb.Word[0]));
-            }
-        }
-        return used;
-    }
+    // ---- Taking damage ----
 
-    // ---- Taking damage (called by BossPart) ----
-
+    // Called by BossPart when its word is typed.
     public void OnPartBroken(BossPart part)
     {
         part.SetColor(brokenColor);
@@ -236,7 +266,7 @@ public class Boss : MonoBehaviour
             return;
         }
 
-        // Were all 5 parts broken? Big bonus hit, then (if still alive) regrow.
+        // Were all 5 parts broken? Then the quiz.
         foreach (BossPart other in parts)
         {
             if (!other.IsBroken)
@@ -244,10 +274,19 @@ public class Boss : MonoBehaviour
                 return;
             }
         }
-        TakeHit(allPartsBonusDamage);
-        if (IsAlive && !regrowing)
+        if (!stunned && !regrowing)
         {
-            StartCoroutine(RegrowParts());
+            StartCoroutine(QuizRound());
+        }
+    }
+
+    // An explosion (barrel, lure bomb) went off next to the boss.
+    public void TakeBlastDamage(float damage)
+    {
+        if (IsAlive)
+        {
+            hud.ShowFloatingText(BodyCenter + Vector3.up * 2f, "-" + Mathf.RoundToInt(damage), Palette.WordBarrel);
+            TakeHit(damage);
         }
     }
 
@@ -260,34 +299,132 @@ public class Boss : MonoBehaviour
         if (Health <= 0f)
         {
             Die();
+            return;
+        }
+
+        // Below half health: angry, attacks come faster.
+        if (!angry && Health <= maxHealth * 0.5f)
+        {
+            angry = true;
+            hud.ShowFloatingText(BodyCenter + Vector3.up * 3f, "IT'S ANGRY!", new Color(1f, 0.3f, 0.2f));
         }
     }
 
-    private IEnumerator RegrowParts()
+    private void Heal(float amount)
     {
-        regrowing = true;
-        yield return new WaitForSeconds(regrowSeconds);
-        regrowing = false;
+        Health = Mathf.Min(maxHealth, Health + amount);
+        hud.SetBossHealth(Health, maxHealth);
+    }
 
+    // ---- The quiz ----
+
+    // Called by a QuizAnswer when the player's final shot hits it.
+    public void OnQuizAnswer(QuizAnswer answer)
+    {
+        if (quizOpen && chosenAnswer == null)
+        {
+            chosenAnswer = answer;
+        }
+    }
+
+    private IEnumerator QuizRound()
+    {
+        stunned = true;
+        Shake();
+
+        // 1. The question and its 3 answers, floating in an arc in front of the boss.
+        QuizQuestion question = QuizBank.Pick(spawner.UsedFirstLetters());
+        hud.ShowQuiz(question.Question);
+        Tutorial.Once("quiz", "BOSS QUIZ! Type the RIGHT answer for a critical hit. A wrong one heals it!", 6f);
+
+        Vector3[] spots =
+        {
+            new Vector3(-3.2f, 3.2f, -2.5f),
+            new Vector3(0f, 4.3f, -3f),
+            new Vector3(3.2f, 3.2f, -2.5f)
+        };
+        answers.Clear();
+        for (int i = 0; i < question.Answers.Length && i < spots.Length; i++)
+        {
+            answers.Add(QuizAnswer.Create(transform.TransformPoint(spots[i]), question.Answers[i], this, hud));
+        }
+
+        // 2. Wait for an answer (the timer stops while frozen or while a
+        //    killing shot is still flying to an answer).
+        chosenAnswer = null;
+        quizOpen = true;
+        float elapsed = 0f;
+        while (chosenAnswer == null && (elapsed < quizSeconds || AnswerShotInFlight()))
+        {
+            if (GameManager.Instance.State == GameState.Playing && !Powers.IsFrozen)
+            {
+                elapsed += Time.deltaTime;
+            }
+            hud.SetQuizTimer(1f - Mathf.Clamp01(elapsed / quizSeconds));
+            yield return null;
+        }
+        quizOpen = false;
+
+        // 3. The verdict.
+        Vector3 textPosition = BodyCenter + Vector3.up * 3.5f;
+        if (chosenAnswer == null)
+        {
+            hud.ShowFloatingText(textPosition, "TOO SLOW!", Color.white);
+        }
+        else if (chosenAnswer.Word == question.CorrectAnswer)
+        {
+            hud.ShowFloatingText(textPosition, "CRITICAL HIT!", Color.yellow);
+            CameraDirector.Shake(0.6f);
+            GameManager.Instance.AddKill();
+            TakeHit(quizCorrectDamage);
+        }
+        else
+        {
+            hud.ShowFloatingText(textPosition, "WRONG! IT HEALS", new Color(1f, 0.3f, 0.2f));
+            GameManager.Instance.ResetCombo();
+            Heal(quizWrongHeal);
+            LaunchOrb();
+        }
+
+        foreach (QuizAnswer answer in answers)
+        {
+            answer.Remove();
+        }
+        answers.Clear();
+        hud.HideQuiz();
+        stunned = false;
+
+        // 4. The parts come back with new words.
         if (IsAlive)
         {
-            GiveEveryPartANewWord();
+            regrowing = true;
+            yield return new WaitForSeconds(regrowSeconds);
+            regrowing = false;
+            if (IsAlive)
+            {
+                GiveEveryPartANewWord();
+            }
         }
+    }
+
+    // True if the player finished typing an answer and the bullet has not hit yet.
+    private bool AnswerShotInFlight()
+    {
+        foreach (QuizAnswer answer in answers)
+        {
+            if (answer.IsAlive && answer.IsWordComplete)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Every part gets a new hard word, each with a different first letter.
     private void GiveEveryPartANewWord()
     {
-        // Orbs may be in the air: keep clear of their first letters too.
-        List<char> usedFirstLetters = new List<char>();
-        foreach (EnergyOrb orb in orbs)
-        {
-            if (orb.IsAlive)
-            {
-                usedFirstLetters.Add(char.ToUpperInvariant(orb.Word[0]));
-            }
-        }
-
+        // Keep clear of everything else on screen (orbs, barrels...).
+        List<char> usedFirstLetters = spawner.UsedFirstLetters();
         foreach (BossPart part in parts)
         {
             string word = WordBank.PickBossWord(usedFirstLetters);
@@ -311,6 +448,12 @@ public class Boss : MonoBehaviour
             orb.Dissipate(); // orbs still in the air fizzle out harmlessly
         }
         orbs.Clear();
+        foreach (QuizAnswer answer in answers)
+        {
+            answer.Remove();
+        }
+        answers.Clear();
+        hud.HideQuiz();
         StartCoroutine(DeathEffect());
     }
 
@@ -371,6 +514,7 @@ public class BossPart : ITypingTarget
         Label = label;
         labelLocalPosition = labelPosition;
         IsBroken = true; // until Regrow gives it a word
+        Word = "?";      // a placeholder until the first Regrow
     }
 
     public bool IsAlive
@@ -427,6 +571,10 @@ public class BossPart : ITypingTarget
 
     public void CompleteWord()
     {
+        if (IsBroken)
+        {
+            return;
+        }
         IsBroken = true;
         TypedCount = 0;
         Label.enabled = false; // WaveSpawner.LayoutLabels shows it again after Regrow

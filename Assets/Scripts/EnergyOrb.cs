@@ -1,6 +1,6 @@
 // EnergyOrb.cs
 // ---------------------------------------------------------------------------
-// The boss's attack. When its red warning glow is full, the Boss fires an
+// The boss's attack. When its body has turned fully red, the Boss fires an
 // EnergyOrb (EnergyOrb.Launch) at the player. The orb flies for flightSeconds
 // and carries its own word, like an enemy:
 //   - type the word -> a Bullet hits the orb -> it bursts, the attack is
@@ -11,7 +11,9 @@
 // (WordBank.PickOrbWord). IsCaseSensitive = true tells TypingController to
 // compare every character exactly.
 //
-// Built entirely in code (a glowing pulsing sphere), so it needs no prefab.
+// The freeze power stops orbs in mid-air.
+//
+// Built entirely in code (a pulsing pink sphere), so it needs no prefab.
 // ---------------------------------------------------------------------------
 using System.Collections;
 using TMPro;
@@ -26,7 +28,6 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
     private const float LabelAbove = 0.7f;       // the word sits this far above the orb's centre
 
     private static readonly Color OrbColor = new Color(1f, 0.15f, 0.55f);    // hot pink
-    private static Material sharedMaterial;
 
     public string Word { get; private set; }
     public string ColoredWord { get; private set; }
@@ -47,7 +48,7 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
         Destroy(orbObject.GetComponent<Collider>()); // hits by distance, not physics
         orbObject.transform.position = position;
         orbObject.transform.localScale = Vector3.one * Size;
-        orbObject.GetComponent<Renderer>().sharedMaterial = GetMaterial();
+        orbObject.GetComponent<Renderer>().sharedMaterial = Palette.Lit(OrbColor);
 
         EnergyOrb orb = orbObject.AddComponent<EnergyOrb>();
         orb.Word = word;
@@ -59,22 +60,6 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
         orb.Label = hud.CreateWordLabel(new Vector2(0.5f, 0f)); // centred above the orb
         orb.RefreshLabel();
         return orb;
-    }
-
-    // An unlit (always bright) material, created once. See Bullet.GetMaterial.
-    private static Material GetMaterial()
-    {
-        if (sharedMaterial == null)
-        {
-            Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (shader == null)
-            {
-                shader = Shader.Find("Sprites/Default");
-            }
-            sharedMaterial = new Material(shader);
-            sharedMaterial.color = OrbColor;
-        }
-        return sharedMaterial;
     }
 
     // The orb flies at the player's face, a little below the camera.
@@ -93,6 +78,12 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
         // Throb, so it reads as "dangerous energy".
         float pulse = 1f + Mathf.Sin(Time.time * PulseSpeed) * PulseAmount;
         transform.localScale = Vector3.one * Size * pulse;
+
+        // The freeze power stops it in mid-air (there is still time to type it).
+        if (Powers.IsFrozen)
+        {
+            return;
+        }
 
         Vector3 aim = AimPoint();
         transform.position = Vector3.MoveTowards(transform.position, aim, speed * Time.deltaTime);
@@ -159,6 +150,10 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
     // The player's bullet hit it: the attack is cancelled.
     public void CompleteWord()
     {
+        if (!IsAlive)
+        {
+            return;
+        }
         GameManager.Instance.AddKill();
         Vanish();
         StartCoroutine(Burst());

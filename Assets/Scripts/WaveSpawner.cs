@@ -1,24 +1,25 @@
 // WaveSpawner.cs
 // ---------------------------------------------------------------------------
-// Runs the waves and creates the zombies.
-//   - Wave n spawns zombiesBase + zombiesPerWave x n zombies (4 + 2n by default),
-//     one every spawnInterval seconds.
-//   - Every wave after the first is a little faster: zombies gain
-//     zombieSpeedPerWave, and the spawn interval shrinks by spawnIntervalPerWave
-//     (but never below 0.8 seconds).
-//   - EXPLOSIVE zombies (bigger, red, long word, blast ring) start in wave
-//     explosiveFirstWave (2) with explosiveStartCount (2) of them, and each later
-//     wave has explosivePerWave (1) more. The rest are normal.
-//   - A "Wave N" banner shows for 3 seconds before each wave.
-//   - A wave ends when all of its zombies are dead or removed.
-//   - Every bossEveryWaves-th wave (5, 10, ...) is a BOSS FIGHT instead: a
-//     "BOSS FIGHT" banner shows while the rail brakes to a stop, then a Boss
-//     appears in the middle of the track ahead, with a red health bar. No
-//     zombies spawn. When the boss dies the rail starts moving again.
-//   - Clearing the last wave wins the game.
+// Runs the level, Typing of the Dead style. For every Encounter of the Level
+// (street, alley, warehouse, yard, lab), in order:
+//   1. RIDE: the player rides the encounter's route, then stops and turns to
+//      face the fight.
+//   2. FIGHT: a "Wave N" banner, then the area's barrels and supply crates get
+//      words (they can be typed now) and a wave of zombies comes out of the
+//      area's spawn points (doors burst open), a few at a time. Or, in the
+//      last area, the BOSS.
+//   3. CLEARED: when every zombie is dead, the exit gate opens and the next
+//      ride begins.
+// After the last encounter the player wins.
 //
-// It also keeps the list of alive zombies, which TypingController (targeting)
-// and Zombie (blast) both read.
+// Wave n (encounter n) has zombiesBase + zombiesPerWave x n zombies (4 + 2n by
+// default). Later waves are faster, spawn more often, and mix in special
+// zombies: EXPLOSIVE ones from explosiveFirstWave, RUNNERS from
+// runnerFirstWave, ARMORED ones from armoredFirstWave (see Zombie).
+//
+// It also keeps the lists of everything that can be typed (GetTypingTargets),
+// which TypingController (targeting), Explosion (blasts) and the HUD use, and
+// every frame it places the enemies' words on screen (LayoutLabels).
 // ---------------------------------------------------------------------------
 using System.Collections;
 using System.Collections.Generic;
@@ -28,7 +29,6 @@ using UnityEngine;
 public class WaveSpawner : MonoBehaviour
 {
     [Header("Waves")]
-    [SerializeField] private int waveCount = 5;
     [SerializeField] private int zombiesBase = 4;               // wave n spawns zombiesBase + zombiesPerWave x n
     [SerializeField] private int zombiesPerWave = 2;
     [SerializeField] private float spawnInterval = 2.0f;        // seconds between spawns in wave 1
@@ -43,28 +43,37 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private int explosiveStartCount = 2;       // explosive zombies in explosiveFirstWave
     [SerializeField] private int explosivePerWave = 1;          // one more explosive zombie in every later wave
 
-    [Header("Spawn area (in front of the player)")]
-    [SerializeField] private float spawnDistanceMin = 35f;
-    [SerializeField] private float spawnDistanceMax = 45f;
-    [SerializeField] private float spawnLaneHalfWidth = 7f;     // zombies spawn at X from -this to +this
+    [Header("Runners")]
+    [SerializeField] private int runnerFirstWave = 3;
+    [SerializeField] private int runnerStartCount = 2;
+    [SerializeField] private int runnersPerWave = 1;
+
+    [Header("Armored zombies")]
+    [SerializeField] private int armoredFirstWave = 4;
+    [SerializeField] private int armoredStartCount = 2;
+    [SerializeField] private int armoredPerWave = 1;
 
     [Header("Boss")]
-    [SerializeField] private int bossEveryWaves = 5;            // every Nth wave is a boss fight (0 = no bosses)
-    [SerializeField] private float bossDistance = 16f;          // metres ahead of the stopped player
+    [SerializeField] private string bossName = "SUBJECT ZERO";
 
-    [Header("References (wired by the scene builder)")]
+    [Header("References (wired in the scene)")]
     [SerializeField] private Zombie zombiePrefab;
     [SerializeField] private Transform player;
     [SerializeField] private HUD hud;
+    [SerializeField] private Level level;
 
     private const float MinSpawnInterval = 0.8f; // the spawn interval never goes below this
-    private const float BannerSeconds = 3f;      // how long the "Wave N" banner stays up
+    private const float PackStagger = 0.35f;     // seconds between the zombies of one pack
+    private const float BannerSeconds = 2f;      // how long the "Wave N" banner stays up
+    private const float GateSeconds = 1.5f;      // time for a gate to open before the ride goes on
 
     private readonly List<Zombie> aliveZombies = new List<Zombie>();
     private readonly List<ITypingTarget> typingTargets = new List<ITypingTarget>();
+    private readonly List<SupplyCrate> activeCrates = new List<SupplyCrate>();
+    private readonly List<Vector3> threatPositions = new List<Vector3>();
 
-    private RailMover rail;   // on the Player object; braked during boss fights
-    private Boss boss;        // the current boss, or null
+    private RailMover rail;          // on the Player object
+    private Boss boss;               // the current boss, or null
 
     // Every zombie that is currently alive.
     public List<Zombie> AliveZombies
@@ -72,12 +81,42 @@ public class WaveSpawner : MonoBehaviour
         get { return aliveZombies; }
     }
 
-    // Everything the player can type right now: alive zombies plus the boss's
-    // unbroken parts. The list is reused, so read it right away.
+    // The barrels of the area being fought (Explosion sets them off).
+    public List<Barrel> ActiveBarrels { get; } = new List<Barrel>();
+
+    // The boss being fought, or null.
+    public Boss CurrentBoss
+    {
+        get { return boss; }
+    }
+
+    // Used by zombies, barrels... to create their word.
+    public HUD Hud
+    {
+        get { return hud; }
+    }
+
+    // Everything the player can type right now: alive zombies, the active
+    // barrels and supply crates, and the boss's parts, orbs and quiz answers.
+    // The list is reused, so read it right away.
     public List<ITypingTarget> GetTypingTargets()
     {
         typingTargets.Clear();
         typingTargets.AddRange(aliveZombies);
+        foreach (Barrel barrel in ActiveBarrels)
+        {
+            if (barrel != null && barrel.IsAlive)
+            {
+                typingTargets.Add(barrel);
+            }
+        }
+        foreach (SupplyCrate crate in activeCrates)
+        {
+            if (crate != null && crate.IsAlive)
+            {
+                typingTargets.Add(crate);
+            }
+        }
         if (boss != null && boss.IsAlive)
         {
             boss.AddTypeableParts(typingTargets);
@@ -85,27 +124,71 @@ public class WaveSpawner : MonoBehaviour
         return typingTargets;
     }
 
-    private void Start()
+    // UPPERCASE first letters of every word that can be typed right now. New
+    // words avoid them, so the first key always points at exactly one target.
+    public List<char> UsedFirstLetters()
     {
-        hud.SetWave(1, waveCount);
+        List<char> used = new List<char>();
+        foreach (ITypingTarget target in GetTypingTargets())
+        {
+            used.Add(char.ToUpperInvariant(target.Word[0]));
+        }
+        return used;
+    }
+
+    // Awake (not Start): after a Restart, GameManager.Start begins the waves at once,
+    // and that may happen before this object's Start. Level builds its map in its
+    // own Awake, which runs before this one (see Level's DefaultExecutionOrder).
+    private void Awake()
+    {
         rail = player.GetComponent<RailMover>();
+
+        if (level == null || level.Encounters.Count == 0)
+        {
+            Debug.LogError("WaveSpawner: no Level with encounters is wired in the scene.");
+            return;
+        }
+
+        hud.SetWave(1, level.Encounters.Count);
+        rail.PlaceAt(level.StartPosition, level.StartFacing);
     }
 
     private void LateUpdate()
     {
         LayoutLabels();
+        UpdateThreatArrows();
+    }
+
+    // Arrows at the screen edges toward zombies that are off screen.
+    private void UpdateThreatArrows()
+    {
+        bool playing = GameManager.Instance.State == GameState.Playing;
+        threatPositions.Clear();
+        if (playing)
+        {
+            foreach (Zombie zombie in aliveZombies)
+            {
+                threatPositions.Add(zombie.HitPoint);
+            }
+        }
+        hud.UpdateThreatArrows(threatPositions, Camera.main);
     }
 
     // ---- Enemy words on screen ----
     // Every enemy word is a HUD text (HUD.CreateWordLabel), drawn on top of the
     // 3D scene, so no body can hide it. Every frame each word is pinned to its
     // enemy's LabelAnchor:
-    //   - it is shown only while its enemy is in front of the camera, so the
-    //     word appears and disappears together with the enemy;
+    //   - it is hidden while its enemy is behind the camera;
+    //   - if its enemy is off to a side (or above), the word is kept
+    //     labelEdgeMargin inside that screen edge, so it can still be read and
+    //     typed (KeepOnScreen). For a zombie that is off screen, this puts the
+    //     word next to its red threat arrow (only zombies get arrows);
     //   - it shrinks with distance, like the enemy does (labelReferenceDistance);
     //   - words are placed one by one in priority order (the word being typed
     //     first, then the nearest enemy first). A word that would overlap one
-    //     already placed is pushed up until it is clear, and slides there smoothly.
+    //     already placed is pushed up until it is clear, and slides there
+    //     smoothly, but never past the top edge: in a big pile-up the extra
+    //     words stop at the top edge and are drawn over each other.
 
     [Header("Enemy words")]
     [SerializeField] private float labelReferenceDistance = 12f; // at this distance a word is drawn at full size
@@ -113,6 +196,7 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private float labelMaxScale = 1.2f;         // near words never get bigger than this
     [SerializeField] private float labelGap = 4f;                // empty space (HUD units) between stacked words
     [SerializeField] private float labelSlideSharpness = 14f;    // higher = pushed words slide into place faster
+    [SerializeField] private float labelEdgeMargin = 110f;       // HUD units: words always stay this far inside the screen edges
 
     private readonly List<ITypingTarget> labelOrder = new List<ITypingTarget>();
     private readonly List<Rect> placedLabels = new List<Rect>();
@@ -122,11 +206,6 @@ public class WaveSpawner : MonoBehaviour
     private Dictionary<TMP_Text, float> labelLifts = new Dictionary<TMP_Text, float>();
     private Dictionary<TMP_Text, float> nextLabelLifts = new Dictionary<TMP_Text, float>();
 
-    // Used by Zombie to create its word.
-    public HUD Hud
-    {
-        get { return hud; }
-    }
 
     private void LayoutLabels()
     {
@@ -182,6 +261,7 @@ public class WaveSpawner : MonoBehaviour
             // The word's box on screen with no push, then pushed up past every
             // word already placed. It only ever moves up, so this always finishes.
             Vector2 size = textSize * scale;
+            anchor = KeepOnScreen(anchor, size, labelRect.pivot, layer.rect);
             Rect baseRect = new Rect(anchor - Vector2.Scale(size, labelRect.pivot), size);
             Rect rect = baseRect;
             bool moved = true;
@@ -197,6 +277,9 @@ public class WaveSpawner : MonoBehaviour
                     }
                 }
             }
+            // Never push a word off the top of the screen. In a big pile-up the
+            // extra words all stop at the top edge and are drawn over each other.
+            rect.y = Mathf.Min(rect.y, layer.rect.yMax - labelEdgeMargin - rect.height);
             placedLabels.Add(rect);
 
             // Slide toward the new push (new words jump straight there).
@@ -228,10 +311,47 @@ public class WaveSpawner : MonoBehaviour
         nextLabelLifts = swap;
     }
 
+    // Moves a word that would stick out of the screen back inside it, keeping
+    // labelEdgeMargin free at the edges. The word slides straight toward the
+    // middle of the screen, so it ends up on the same side as its enemy (for
+    // a zombie that is off screen: next to its red threat arrow). A word that
+    // already fits does not move.
+    //   anchor = where the word's pivot would be (HUD units, 0,0 = screen middle)
+    //   size   = the word's size on screen, pivot = the word's pivot, screen = the word layer
+    private Vector2 KeepOnScreen(Vector2 anchor, Vector2 size, Vector2 pivot, Rect screen)
+    {
+        // The middle of the word's box.
+        Vector2 middle = anchor + Vector2.Scale(new Vector2(0.5f, 0.5f) - pivot, size);
+
+        // How far from the screen middle the box's middle may be.
+        float roomX = Mathf.Max(0f, screen.width * 0.5f - labelEdgeMargin - size.x * 0.5f);
+        float roomY = Mathf.Max(0f, screen.height * 0.5f - labelEdgeMargin - size.y * 0.5f);
+
+        // fit = 1 means it already fits; smaller = pull it that much closer to the middle.
+        float fit = 1f;
+        if (Mathf.Abs(middle.x) > roomX)
+        {
+            fit = Mathf.Min(fit, roomX / Mathf.Abs(middle.x));
+        }
+        if (Mathf.Abs(middle.y) > roomY)
+        {
+            fit = Mathf.Min(fit, roomY / Mathf.Abs(middle.y));
+        }
+
+        // Pull the box's middle that much closer to the screen middle...
+        Vector2 newMiddle = middle * fit;
+        // ...and move the word's pivot by the same amount, so the whole box moves together.
+        return anchor + (newMiddle - middle);
+    }
+
     // Called by GameManager when the game starts.
     public void BeginWaves()
     {
-        StartCoroutine(RunWaves());
+        if (level == null || level.Encounters.Count == 0)
+        {
+            return;
+        }
+        StartCoroutine(RunLevel());
     }
 
     // Called by GameManager when the player dies.
@@ -248,131 +368,291 @@ public class WaveSpawner : MonoBehaviour
 
     // A coroutine: it runs over many frames. Every "yield return" pauses it here
     // and Unity continues it later (after the wait is over, or on the next frame).
-    private IEnumerator RunWaves()
+    private IEnumerator RunLevel()
     {
-        for (int wave = 1; wave <= waveCount; wave++)
+        int count = level.Encounters.Count;
+
+        for (int index = 0; index < count; index++)
         {
-            hud.SetWave(wave, waveCount);
+            Encounter encounter = level.Encounters[index];
+            int wave = index + 1;
+            hud.SetWave(wave, count);
 
-            // Boss wave: the whole wave is the boss fight.
-            if (bossEveryWaves > 0 && wave % bossEveryWaves == 0)
+            // 1. Ride to the fight.
+            rail.RideAlong(encounter.Route, encounter.Facing);
+            while (!rail.IsStopped)
             {
-                yield return RunBossFight();
-                continue;
+                yield return null;
             }
 
-            // 1. Work out this wave's numbers. Wave 1 uses the base values.
-            int zombiesThisWave = zombiesBase + zombiesPerWave * wave;
-            float speed = zombieSpeed + zombieSpeedPerWave * (wave - 1);
-            float interval = spawnInterval - spawnIntervalPerWave * (wave - 1);
-            if (interval < MinSpawnInterval)
-            {
-                interval = MinSpawnInterval;
-            }
-
-            // 2. Announce the wave.
-            hud.ShowBanner("Wave " + wave);
+            // 2. Fight.
+            hud.ShowBanner(encounter.IsBossFight ? "BOSS FIGHT" : "Wave " + wave);
             yield return new WaitForSeconds(BannerSeconds);
             hud.HideBanner();
+            ActivateProps(encounter);
+            StartCoroutine(ShowPropHints());
 
-            // 3. Spawn the zombies one at a time. The explosive ones are mixed in
-            //    at random positions in the spawn order.
-            bool[] explosivePlan = PlanExplosives(zombiesThisWave, ExplosiveCountForWave(wave));
-            for (int i = 0; i < zombiesThisWave; i++)
+            if (encounter.IsBossFight)
             {
-                SpawnZombie(speed, explosivePlan[i]);
-                yield return new WaitForSeconds(interval);
+                yield return RunBossFight(encounter);
+            }
+            else
+            {
+                yield return RunZombieWave(wave, encounter);
             }
 
-            // 4. Wait until every zombie of this wave is dead or removed.
-            while (aliveZombies.Count > 0)
+            // 3. Cleared: the next gate opens.
+            DeactivateProps();
+            if (encounter.ExitGate != null)
             {
-                yield return null; // wait one frame, then check again
+                encounter.ExitGate.Open();
+                yield return new WaitForSeconds(GateSeconds);
             }
         }
 
         GameManager.Instance.WinGame();
     }
 
-    // How many explosive zombies this wave has: none before explosiveFirstWave,
-    // then explosiveStartCount, plus explosivePerWave for every later wave.
-    private int ExplosiveCountForWave(int wave)
+    // ---- A zombie wave ----
+
+    private IEnumerator RunZombieWave(int wave, Encounter encounter)
     {
-        if (wave < explosiveFirstWave)
+        // 1. This wave's numbers. Wave 1 uses the base values.
+        int zombiesThisWave = zombiesBase + zombiesPerWave * wave;
+        float speed = zombieSpeed + zombieSpeedPerWave * (wave - 1);
+        float interval = spawnInterval - spawnIntervalPerWave * (wave - 1);
+        if (interval < MinSpawnInterval)
         {
-            return 0;
+            interval = MinSpawnInterval;
         }
-        return explosiveStartCount + explosivePerWave * (wave - explosiveFirstWave);
+
+        ZombieKind[] plan = PlanKinds(zombiesThisWave, wave);
+        Tutorial.Once("type", "Type the word above a zombie to shoot it. Every letter is a bullet!", 6f);
+
+        // 2. Zombies come out in packs of GroupSize, from the spawn points in turn
+        //    (a shuffled order, so it is not the same door every time).
+        List<SpawnPoint> order = new List<SpawnPoint>(encounter.SpawnPoints);
+        Shuffle(order);
+        int spawned = 0;
+        int next = 0;
+        while (spawned < zombiesThisWave)
+        {
+            SpawnPoint point = order.Count > 0 ? order[next % order.Count] : FallbackSpawnPoint();
+            next += 1;
+
+            int pack = Mathf.Min(Mathf.Max(1, encounter.GroupSize), zombiesThisWave - spawned);
+            if (point.Door != null)
+            {
+                point.Door.BurstOpen();
+            }
+
+            for (int i = 0; i < pack; i++)
+            {
+                SpawnZombie(point, plan[spawned], speed);
+                spawned += 1;
+                if (i < pack - 1)
+                {
+                    yield return new WaitForSeconds(PackStagger);
+                }
+            }
+            yield return new WaitForSeconds(interval * pack);
+        }
+
+        // 3. Wait until every zombie of this wave is dead or removed.
+        while (aliveZombies.Count > 0)
+        {
+            yield return null;
+        }
     }
 
-    // Returns one entry per zombie of the wave: true = that spawn is explosive.
-    // explosiveCount entries are true (never more than the whole wave), shuffled.
-    private bool[] PlanExplosives(int zombieCount, int explosiveCount)
+    // One entry per zombie of the wave (in spawn order): which kind it is.
+    private ZombieKind[] PlanKinds(int zombieCount, int wave)
     {
-        bool[] plan = new bool[zombieCount];
-        for (int i = 0; i < zombieCount && i < explosiveCount; i++)
-        {
-            plan[i] = true;
-        }
+        ZombieKind[] plan = new ZombieKind[zombieCount];
+        int index = 0;
+        index = Fill(plan, index, ZombieKind.Explosive, CountForWave(wave, explosiveFirstWave, explosiveStartCount, explosivePerWave));
+        index = Fill(plan, index, ZombieKind.Runner, CountForWave(wave, runnerFirstWave, runnerStartCount, runnersPerWave));
+        Fill(plan, index, ZombieKind.Armored, CountForWave(wave, armoredFirstWave, armoredStartCount, armoredPerWave));
+        // The rest stay ZombieKind.Normal (the default value).
 
-        // Fisher-Yates shuffle: every order is equally likely.
-        for (int i = zombieCount - 1; i > 0; i--)
+        // Fisher-Yates shuffle: the special ones come at random moments.
+        for (int i = plan.Length - 1; i > 0; i--)
         {
             int j = Random.Range(0, i + 1);
-            bool swap = plan[i];
+            ZombieKind swap = plan[i];
             plan[i] = plan[j];
             plan[j] = swap;
         }
         return plan;
     }
 
-    private IEnumerator RunBossFight()
+    // Writes kind into plan from index on, count times (never past the end). Returns the next free index.
+    private static int Fill(ZombieKind[] plan, int index, ZombieKind kind, int count)
     {
-        // 1. Warn the player and brake the rail to a stop.
-        rail.Brake();
-        hud.ShowBanner("BOSS FIGHT");
-        yield return new WaitForSeconds(BannerSeconds);
-        while (!rail.IsStopped)
+        for (int i = 0; i < count && index < plan.Length; i++)
         {
-            yield return null;
+            plan[index] = kind;
+            index += 1;
         }
-        hud.HideBanner();
+        return index;
+    }
 
-        // 2. The boss appears in the middle of the track, ahead of the player.
-        //    It reuses the zombie body's material (tinted red) so it renders
-        //    correctly in this project's render pipeline.
-        Vector3 position = new Vector3(0f, 0f, player.position.z + bossDistance);
-        Material bodyMaterial = zombiePrefab.transform.Find("Body").GetComponent<Renderer>().sharedMaterial;
-        hud.ShowBossBar("BOSS");
-        boss = Boss.Create(position, bodyMaterial, hud);
+    // How many special zombies of one kind a wave has: none before firstWave,
+    // then startCount, plus perWave for every later wave.
+    private static int CountForWave(int wave, int firstWave, int startCount, int perWave)
+    {
+        if (wave < firstWave)
+        {
+            return 0;
+        }
+        return startCount + perWave * (wave - firstWave);
+    }
 
-        // 3. Wait until it is dead, then ride on.
+    private void SpawnZombie(SpawnPoint point, ZombieKind kind, float speed)
+    {
+        // A small random offset so a pack does not stand in one spot.
+        Vector2 offset = Random.insideUnitCircle * point.Spread;
+        Vector3 side = new Vector3(offset.x, 0f, offset.y);
+        Vector3 position = point.Position + side;
+        Vector3 exit = point.Exit + side * 0.5f;
+
+        // Pick a word whose first letter is not on screen yet.
+        List<char> used = UsedFirstLetters();
+        string word = kind == ZombieKind.Armored ? WordBank.PickArmorWord(used) : WordBank.PickWord(used, kind);
+
+        Quaternion rotation = Quaternion.identity;
+        Vector3 walk = exit - position;
+        walk.y = 0f;
+        if (walk.sqrMagnitude > 0.001f)
+        {
+            rotation = Quaternion.LookRotation(walk);
+        }
+
+        Zombie zombie = Instantiate(zombiePrefab, position, rotation);
+        zombie.Setup(word, speed, player, this, kind, exit);
+        aliveZombies.Add(zombie);
+
+        // The first time each special kind shows up, say what it does.
+        if (kind == ZombieKind.Explosive)
+        {
+            Tutorial.Once("explosive", "RED ZOMBIE: finish its word to blow up EVERYTHING in its ring!", 6f);
+        }
+        else if (kind == ZombieKind.Runner)
+        {
+            Tutorial.Once("runner", "RUNNER! Fast and yellow - shoot it before the slow ones.", 6f);
+        }
+        else if (kind == ZombieKind.Armored)
+        {
+            Tutorial.Once("armored", "ARMORED: the first word breaks its armor. Explosions kill it at once!", 6f);
+        }
+    }
+
+    // Only used if an encounter has no spawn points: somewhere ahead of the player.
+    private SpawnPoint FallbackSpawnPoint()
+    {
+        Vector3 ahead = player.position + rail.Facing * 30f;
+        return new SpawnPoint(ahead, ahead - rail.Facing * 2f, null, 5f);
+    }
+
+    private static void Shuffle(List<SpawnPoint> list)
+    {
+        for (int i = list.Count - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            SpawnPoint swap = list[i];
+            list[i] = list[j];
+            list[j] = swap;
+        }
+    }
+
+    // ---- Barrels and supply crates of the area ----
+
+    // Gives every barrel and crate of the encounter a word: they can be typed now.
+    private void ActivateProps(Encounter encounter)
+    {
+        foreach (Barrel barrel in encounter.Barrels)
+        {
+            if (barrel != null && !barrel.IsExploded)
+            {
+                barrel.Activate(WordBank.PickBarrelWord(UsedFirstLetters()), hud);
+                ActiveBarrels.Add(barrel);
+            }
+        }
+        foreach (SupplyCrate crate in encounter.Crates)
+        {
+            if (crate != null && !crate.IsOpened)
+            {
+                crate.Activate(WordBank.PickCrateWord(crate.Kind, UsedFirstLetters()), hud);
+                activeCrates.Add(crate);
+            }
+        }
+    }
+
+    // The fight is over: barrels and crates left behind cannot be typed any more.
+    private void DeactivateProps()
+    {
+        foreach (Barrel barrel in ActiveBarrels)
+        {
+            if (barrel != null && !barrel.IsExploded)
+            {
+                barrel.Deactivate();
+            }
+        }
+        ActiveBarrels.Clear();
+
+        foreach (SupplyCrate crate in activeCrates)
+        {
+            if (crate != null && !crate.IsOpened)
+            {
+                crate.Deactivate();
+            }
+        }
+        activeCrates.Clear();
+    }
+
+    // Explains barrels and crates the first time they appear (a few seconds
+    // into the fight, so it does not hide the first hint).
+    private IEnumerator ShowPropHints()
+    {
+        yield return new WaitForSeconds(6f);
+        foreach (Barrel barrel in ActiveBarrels)
+        {
+            if (barrel != null && barrel.IsAlive)
+            {
+                Tutorial.Once("barrel", "BARREL: type its orange word to blow up everything in its ring. Wait for zombies to walk in!", 7f);
+                break;
+            }
+        }
+
+        yield return new WaitForSeconds(7f);
+        foreach (SupplyCrate crate in activeCrates)
+        {
+            if (crate != null && crate.IsAlive)
+            {
+                Tutorial.Once("crate", "SUPPLY CRATE: type its green word to grab what is inside.", 6f);
+                break;
+            }
+        }
+    }
+
+    // ---- The boss ----
+
+    private IEnumerator RunBossFight(Encounter encounter)
+    {
+        // 1. The boss appears where it fights.
+        CameraDirector.Shake(0.4f);
+        boss = Boss.Create(encounter.BossStand, player.position, this, hud);
+        hud.ShowBossBar(bossName);
+
+        // 2. Wait until it is dead.
         while (boss.IsAlive)
         {
             yield return null;
         }
+
+        // 3. Let it sink into the ground.
+        yield return new WaitForSeconds(1.5f);
         boss = null;
         hud.HideBossBar();
-        rail.Release();
-    }
-
-    private void SpawnZombie(float speed, bool explosive)
-    {
-        // Somewhere ahead of the player, at a random spot across the corridor.
-        float x = Random.Range(-spawnLaneHalfWidth, spawnLaneHalfWidth);
-        float z = player.position.z + Random.Range(spawnDistanceMin, spawnDistanceMax);
-        Vector3 position = new Vector3(x, 0f, z);
-
-        // Collect the first letters already in use, so WordBank can avoid them.
-        List<char> usedFirstLetters = new List<char>();
-        foreach (Zombie alive in aliveZombies)
-        {
-            usedFirstLetters.Add(alive.Word[0]);
-        }
-        string word = WordBank.PickWord(usedFirstLetters, explosive);
-
-        Zombie zombie = Instantiate(zombiePrefab, position, Quaternion.identity);
-        zombie.Setup(word, speed, player, this, explosive);
-        aliveZombies.Add(zombie);
     }
 }

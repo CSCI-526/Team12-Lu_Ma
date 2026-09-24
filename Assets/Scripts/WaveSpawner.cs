@@ -1,7 +1,7 @@
 // WaveSpawner.cs
 // ---------------------------------------------------------------------------
 // Runs the level, Typing of the Dead style. For every Encounter of the Level
-// (street, alley, warehouse, yard, lab), in order:
+// (the 5 fights listed at the top of Level.cs), in order:
 //   1. RIDE: the player rides the encounter's route, then stops and turns to
 //      face the fight.
 //   2. FIGHT: a "Wave N" banner, then the area's barrels and supply crates get

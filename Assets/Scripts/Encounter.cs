@@ -1,8 +1,8 @@
 // Encounter.cs
 // ---------------------------------------------------------------------------
 // One fight in the level: a place where the player stops and zombies come at
-// them (Typing of the Dead style). Level.cs creates one Encounter per area
-// (street, alley, warehouse, yard, lab) and WaveSpawner plays them in order:
+// them (Typing of the Dead style). Level.cs creates one Encounter per fight
+// (the 5 fights listed at the top of Level.cs) and WaveSpawner plays them in order:
 //
 //   1. ride along Route (the last point is where the player stops),
 //   2. turn to face Facing,

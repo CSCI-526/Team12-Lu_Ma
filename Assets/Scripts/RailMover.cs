@@ -18,10 +18,10 @@ using UnityEngine;
 public class RailMover : MonoBehaviour
 {
     [Header("Tuning")]
-    [SerializeField] private float railSpeed = 5f;           // metres per second between fights
-    [SerializeField] private float accelerationSeconds = 1f; // time to reach full speed (and to stop)
-    [SerializeField] private float turnSpeed = 100f;         // degrees per second the body turns
-    [SerializeField] private float cornerLookAhead = 3f;     // start turning this many metres before a corner
+    [SerializeField] private float railSpeed = 9f;           // metres per second between fights (a run)
+    [SerializeField] private float accelerationSeconds = 0.8f; // time to reach full speed (and to stop)
+    [SerializeField] private float turnSpeed = 160f;         // degrees per second the body turns
+    [SerializeField] private float cornerLookAhead = 5f;     // start turning this many metres before a corner
 
     private readonly List<Vector3> route = new List<Vector3>();
     private int nextPoint;          // index in route of the point we are heading to

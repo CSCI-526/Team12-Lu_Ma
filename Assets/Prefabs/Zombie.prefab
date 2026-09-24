@@ -297,7 +297,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::BlastRing
   pointCount: 48
   lineWidth: 0.08
-  heightAboveGround: 0.03
+  heightAboveGround: 0.1
   blastScale: 1.5
   blastDuration: 0.3
   longWordMaterial: {fileID: 2100000, guid: 918c9d11e13152f4ab104c7f97311bbf, type: 2}

@@ -1212,10 +1212,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cb243204285a7e042afb09c2a36479e3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RailMover
-  railSpeed: 5
-  accelerationSeconds: 1
-  turnSpeed: 100
-  cornerLookAhead: 3
+  railSpeed: 9
+  accelerationSeconds: 0.8
+  turnSpeed: 160
+  cornerLookAhead: 5
 --- !u!1 &631902376
 GameObject:
   m_ObjectHideFlags: 0
@@ -2810,9 +2810,9 @@ MonoBehaviour:
   recoilReturnTime: 0.12
   maxRecoil: 4
   baseFieldOfView: 65
-  bobHeight: 0.035
-  bobFrequency: 1.9
-  bobRollDegrees: 0.6
+  bobHeight: 0.06
+  bobFrequency: 2.8
+  bobRollDegrees: 1
   bobFadeSeconds: 0.5
   breathingDegrees: 0.25
   breathingFrequency: 0.25

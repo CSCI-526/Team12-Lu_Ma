@@ -12,7 +12,7 @@
 //     pulls the view gently toward it, so the player notices the threat.
 //   - SHAKE:     CameraDirector.Shake(0.5f);   explosions, hits ("trauma" 0..1)
 //   - KICK:      CameraDirector.Kick(1f);      every shot tips the view up a bit
-//   - a head-bob while riding, and a slow breathing sway all the time.
+//   - a running head-bob between fights, and a slow breathing sway all the time.
 //   - on the Start panel and the results screens the view drifts slowly
 //     left and right, so the scene behind the panel feels alive.
 //
@@ -62,18 +62,18 @@ public class CameraDirector : MonoBehaviour
     [Header("Field of view")]
     [SerializeField] private float baseFieldOfView = 65f;     // degrees, top to bottom of the screen
 
-    [Header("Head bob (while riding) and breathing")]
-    [SerializeField] private float bobHeight = 0.035f;        // metres up and down
-    [SerializeField] private float bobFrequency = 1.9f;       // bobs per second (one per step)
-    [SerializeField] private float bobRollDegrees = 0.6f;     // the head tilts left, then right, every two steps
+    [Header("Head bob (while running between fights) and breathing")]
+    [SerializeField] private float bobHeight = 0.06f;         // metres up and down
+    [SerializeField] private float bobFrequency = 2.8f;       // bobs per second (one per step: a running pace)
+    [SerializeField] private float bobRollDegrees = 1f;       // the head tilts left, then right, every two steps
     [SerializeField] private float bobFadeSeconds = 0.5f;     // time for the bob to fade in / out when starting / stopping
     [SerializeField] private float breathingDegrees = 0.25f;  // tiny sway that never stops
     [SerializeField] private float breathingFrequency = 0.25f; // breaths per second
 
     // The camera does not draw anything closer than this (metres).
     private const float NearClip = 0.1f;
-    // Nothing further away than this is drawn (the map's streets are shorter).
-    private const float FarClip = 140f;
+    // Nothing further away than this is drawn (the whole USC block and the streets around it fit).
+    private const float FarClip = 400f;
 
     private const float TwoPi = Mathf.PI * 2f;
 

@@ -1,7 +1,7 @@
 // SpawnPoint.cs
 // ---------------------------------------------------------------------------
-// A place zombies come out of: a doorway, a side street, a gap between
-// shipping containers... A zombie appears at Position (out of sight), walks
+// A place zombies come out of: a doorway, a side street, the far end of a
+// walk or an arcade... A zombie appears at Position (out of sight), walks
 // to Exit (just outside the doorway), then heads straight for the player.
 // Make sure the straight line from Exit to the player's stop is free of
 // walls, because zombies walk straight (they do not path-find).

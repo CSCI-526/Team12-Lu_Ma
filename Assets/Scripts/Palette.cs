@@ -18,12 +18,14 @@ using UnityEngine;
 
 public static class Palette
 {
-    // ---- The level: neutral greys and blues (the first prototype's colours) ----
-    public static readonly Color Floor = new Color(0.20f, 0.26f, 0.38f);
+    // ---- The level: neutral greys and blues ----
+    public static readonly Color Floor = new Color(0.20f, 0.26f, 0.38f);   // the ground and the streets
+    public static readonly Color Pavement = new Color(0.29f, 0.33f, 0.43f); // sidewalks, plazas and walks (a bit lighter)
+    public static readonly Color Lawn = new Color(0.16f, 0.21f, 0.29f);     // lawns and planting beds (a bit darker)
     public static readonly Color Rail = new Color(0.62f, 0.68f, 0.78f);
     public static readonly Color Wall = new Color(0.42f, 0.45f, 0.52f);
     public static readonly Color Building = new Color(0.30f, 0.40f, 0.58f);
-    public static readonly Color Block = new Color(0.36f, 0.38f, 0.44f);   // obstacles, shelves, pillars
+    public static readonly Color Block = new Color(0.36f, 0.38f, 0.44f);   // the buildings across the streets, statues, pedestals
     public static readonly Color Door = new Color(0.22f, 0.25f, 0.32f);
     public static readonly Color Doorway = new Color(0.06f, 0.07f, 0.09f); // the dark hole behind an open door
     public static readonly Color Gate = new Color(0.55f, 0.58f, 0.64f);

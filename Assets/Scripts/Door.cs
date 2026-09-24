@@ -16,7 +16,7 @@ using UnityEngine;
 
 public class Door : MonoBehaviour
 {
-    private const float Width = 1.6f;          // metres (Level makes its wall openings this size too)
+    private const float Width = 1.6f;          // metres
     private const float Height = 2.6f;
     private const float Thickness = 0.12f;
     private const float OpenAngle = 100f;      // degrees

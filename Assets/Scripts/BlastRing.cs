@@ -27,7 +27,7 @@ public class BlastRing : MonoBehaviour
     [Header("Ring shape")]
     [SerializeField] private int pointCount = 48;        // points around the circle
     [SerializeField] private float lineWidth = 0.08f;
-    [SerializeField] private float heightAboveGround = 0.03f; // just above the floor so it does not flicker
+    [SerializeField] private float heightAboveGround = 0.1f;  // above the paving and the lawns, so it never hides in them or flickers
 
     [Header("Blast effect")]
     [SerializeField] private float blastScale = 1.5f;    // how much the ring grows

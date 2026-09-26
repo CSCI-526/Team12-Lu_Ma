@@ -8,7 +8,8 @@
 //   - too slow -> the orb reaches the player and deals its damage.
 //
 // Orb words are short but tricky: case-sensitive, with digits and symbols
-// (WordBank.PickOrbWord). IsCaseSensitive = true tells TypingController to
+// (WordBank.PickOrbWord). The freeze power stops it in mid-air, with an
+// ice-blue outline. IsCaseSensitive = true tells TypingController to
 // compare every character exactly.
 //
 // The freeze power stops orbs in mid-air.
@@ -38,6 +39,11 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
     private float speed;  // metres per second
     private int damage;
     private HUD hud;
+    private LineRenderer frozenOutline; // ice-blue ring around the orb while the freeze power is on
+
+    private const float OutlineRadius = 0.7f;   // in the orb's own units (the orb is 1 across): just outside it
+    private const float OutlineWidth = 0.08f;   // metres
+    private const int OutlinePoints = 32;
 
     // Fires an orb from position at the player. It arrives after flightSeconds
     // unless the player types its word first.
@@ -59,7 +65,42 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
 
         orb.Label = hud.CreateWordLabel(new Vector2(0.5f, 0f)); // centred above the orb
         orb.RefreshLabel();
+        orb.BuildFrozenOutline();
         return orb;
+    }
+
+    // A circle (in its own X/Y plane) that is turned to face the camera every
+    // frame, so it always looks like a blue outline around the orb. Hidden
+    // unless the freeze power is on.
+    private void BuildFrozenOutline()
+    {
+        GameObject outlineObject = new GameObject("FrozenOutline");
+        outlineObject.transform.SetParent(transform, false);
+        frozenOutline = outlineObject.AddComponent<LineRenderer>();
+        frozenOutline.useWorldSpace = false;
+        frozenOutline.loop = true;
+        frozenOutline.positionCount = OutlinePoints;
+        frozenOutline.startWidth = OutlineWidth;
+        frozenOutline.endWidth = OutlineWidth;
+        frozenOutline.sharedMaterial = Palette.Unlit(Palette.FrozenIce);
+        frozenOutline.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        frozenOutline.receiveShadows = false;
+        for (int i = 0; i < OutlinePoints; i++)
+        {
+            float angle = i * 2f * Mathf.PI / OutlinePoints;
+            frozenOutline.SetPosition(i, new Vector3(Mathf.Cos(angle), Mathf.Sin(angle), 0f) * OutlineRadius);
+        }
+        frozenOutline.enabled = false;
+    }
+
+    // Shows the outline while frozen and keeps it facing the camera.
+    private void UpdateFrozenOutline(bool frozen)
+    {
+        frozenOutline.enabled = frozen;
+        if (frozen && Camera.main != null)
+        {
+            frozenOutline.transform.rotation = Camera.main.transform.rotation;
+        }
     }
 
     // The orb flies at the player's face, a little below the camera.
@@ -70,7 +111,20 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
 
     private void Update()
     {
-        if (!IsAlive || GameManager.Instance.State != GameState.Playing)
+        if (!IsAlive)
+        {
+            return;
+        }
+        // The frozen outline also shows (and faces the camera) while paused.
+        UpdateFrozenOutline(Powers.IsFrozen);
+        if (GameManager.Instance.State != GameState.Playing)
+        {
+            return;
+        }
+
+        // The freeze power stops it in mid-air (there is still time to type it):
+        // it holds still, with an ice-blue outline, and stops throbbing.
+        if (Powers.IsFrozen)
         {
             return;
         }
@@ -78,12 +132,6 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
         // Throb, so it reads as "dangerous energy".
         float pulse = 1f + Mathf.Sin(Time.time * PulseSpeed) * PulseAmount;
         transform.localScale = Vector3.one * Size * pulse;
-
-        // The freeze power stops it in mid-air (there is still time to type it).
-        if (Powers.IsFrozen)
-        {
-            return;
-        }
 
         Vector3 aim = AimPoint();
         transform.position = Vector3.MoveTowards(transform.position, aim, speed * Time.deltaTime);

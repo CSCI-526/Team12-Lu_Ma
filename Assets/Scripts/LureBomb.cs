@@ -1,7 +1,8 @@
 // LureBomb.cs
 // ---------------------------------------------------------------------------
-// The lure bomb (press 1): a plain dark sphere. It is thrown ahead of the
-// player, lands, and blinks red for FuseSeconds (faster and faster). Every
+// The lure bomb (tap 1 to throw, hold 1 to aim, see Powers): a plain dark
+// sphere. It is thrown ahead of the player along ArcPoint (longer throws fly
+// higher), lands, and blinks red for FuseSeconds (faster and faster). Every
 // zombie within LureRadius forgets the player and crowds around it (each
 // Zombie asks FindLure). Then it explodes (Explosion.Detonate with
 // BlastRadius): everything that gathered around it dies. Its blast ring is
@@ -24,8 +25,10 @@ public class LureBomb : MonoBehaviour
     public const float FuseSeconds = 3.5f; // from landing to the explosion
     public const float BossDamage = 120f;  // if it goes off next to the boss
 
-    private const float FlightSeconds = 0.6f;       // from the hand to the ground
-    private const float ArcHeight = 2f;             // metres above the straight line at the top of the throw
+    private const float MinFlightSeconds = 0.5f;    // from the hand to the ground, for a short throw...
+    private const float FlightSecondsPerMetre = 0.025f; // ...plus this much per metre thrown
+    private const float MinArcHeight = 2f;          // metres above the straight line at the top of the throw...
+    private const float ArcHeightPerMetre = 0.22f;  // ...a longer throw goes higher (the larger of the two is used)
     private const float BombSize = 0.35f;           // diameter in metres
     private const float FirstBlinkInterval = 0.5f;  // seconds between blinks right after landing...
     private const float LastBlinkInterval = 0.1f;   // ...and just before the explosion
@@ -35,6 +38,7 @@ public class LureBomb : MonoBehaviour
 
     private Vector3 startPoint;
     private Vector3 landingPoint;
+    private float flightSeconds;
     private float flightTimer;
     private float fuseTimer;
     private float blinkTimer;
@@ -49,6 +53,7 @@ public class LureBomb : MonoBehaviour
         LureBomb bomb = bombObject.AddComponent<LureBomb>();
         bomb.startPoint = from;
         bomb.landingPoint = landingPoint;
+        bomb.flightSeconds = MinFlightSeconds + FlatDistance(from, landingPoint) * FlightSecondsPerMetre;
         bomb.ball = Shapes.Block(PrimitiveType.Sphere, "Ball", bombObject.transform,
             new Vector3(0f, BombSize * 0.5f, 0f), Vector3.one * BombSize, Palette.Lit(Palette.Bomb)).GetComponent<Renderer>();
         return bomb;
@@ -104,14 +109,30 @@ public class LureBomb : MonoBehaviour
         }
     }
 
-    // In the air: a straight line from start to landing, plus an arc on top.
+    // A point of the throw's path: t = 0 at "from", 1 at "to". A straight line
+    // plus an arc on top (0 at both ends, highest in the middle). The aiming
+    // preview (ThrowArc) draws exactly this path, so the bomb lands where it shows.
+    public static Vector3 ArcPoint(Vector3 from, Vector3 to, float t)
+    {
+        float arcHeight = Mathf.Max(MinArcHeight, FlatDistance(from, to) * ArcHeightPerMetre);
+        Vector3 position = Vector3.Lerp(from, to, t);
+        position.y += arcHeight * 4f * t * (1f - t);
+        return position;
+    }
+
+    private static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        a.y = 0f;
+        b.y = 0f;
+        return Vector3.Distance(a, b);
+    }
+
+    // In the air, along ArcPoint.
     private void Fly()
     {
         flightTimer += Time.deltaTime;
-        float t = Mathf.Clamp01(flightTimer / FlightSeconds);
-        Vector3 position = Vector3.Lerp(startPoint, landingPoint, t);
-        position.y += ArcHeight * 4f * t * (1f - t); // 0 at both ends, ArcHeight in the middle
-        transform.position = position;
+        float t = Mathf.Clamp01(flightTimer / flightSeconds);
+        transform.position = ArcPoint(startPoint, landingPoint, t);
 
         if (t >= 1f)
         {

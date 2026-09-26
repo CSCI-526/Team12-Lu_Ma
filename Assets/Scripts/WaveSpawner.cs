@@ -15,7 +15,10 @@
 // Wave n (encounter n) has zombiesBase + zombiesPerWave x n zombies (4 + 2n by
 // default). Later waves are faster, spawn more often, and mix in special
 // zombies: EXPLOSIVE ones from explosiveFirstWave, RUNNERS from
-// runnerFirstWave, ARMORED ones from armoredFirstWave (see Zombie).
+// runnerFirstWave, ARMORED ones from armoredFirstWave (see Zombie). From
+// chainFirstWave on, WORD CHAIN pairs come on top of that (one more pair each
+// wave): two zombies at once out of two different doors, "hunt" and "hunter", linked in
+// purple (see AddChainPairs and SpawnChainPair). The first pair explains itself.
 //
 // It also keeps the lists of everything that can be typed (GetTypingTargets),
 // which TypingController (targeting), Explosion (blasts) and the HUD use, and
@@ -52,6 +55,11 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private int armoredFirstWave = 4;
     [SerializeField] private int armoredStartCount = 2;
     [SerializeField] private int armoredPerWave = 1;
+
+    [Header("Word chains")]
+    [SerializeField] private int chainFirstWave = 2;            // no WORD CHAIN pairs (hunt + hunter) before this wave
+    [SerializeField] private int chainStartCount = 1;           // pairs in chainFirstWave
+    [SerializeField] private int chainPerWave = 1;              // one more pair in every later wave
 
     [Header("Boss")]
     [SerializeField] private string bossName = "SUBJECT ZERO";
@@ -125,7 +133,8 @@ public class WaveSpawner : MonoBehaviour
     }
 
     // UPPERCASE first letters of every word that can be typed right now. New
-    // words avoid them, so the first key always points at exactly one target.
+    // words avoid them, so the first key usually points at exactly one target
+    // (a WORD CHAIN pair shares its first letter on purpose, see SpawnChainPair).
     public List<char> UsedFirstLetters()
     {
         List<char> used = new List<char>();
@@ -426,7 +435,10 @@ public class WaveSpawner : MonoBehaviour
             interval = MinSpawnInterval;
         }
 
-        ZombieKind[] plan = PlanKinds(zombiesThisWave, wave);
+        // The WORD CHAIN pairs come on top of the wave's zombies (2 more each).
+        HashSet<int> pairStarts;
+        ZombieKind[] plan = AddChainPairs(PlanKinds(zombiesThisWave, wave), wave, out pairStarts);
+        zombiesThisWave = plan.Length;
         Tutorial.Once("type", "Type the word above a zombie to shoot it. Every letter is a bullet!", 6f);
 
         // 2. Zombies come out in packs of GroupSize, from the spawn points in turn
@@ -446,11 +458,22 @@ public class WaveSpawner : MonoBehaviour
                 point.Door.BurstOpen();
             }
 
-            for (int i = 0; i < pack; i++)
+            int packLeft = pack;
+            while (packLeft > 0 && spawned < zombiesThisWave)
             {
-                SpawnZombie(point, plan[spawned], speed);
-                spawned += 1;
-                if (i < pack - 1)
+                // A WORD CHAIN pair takes two places of the plan and comes out together.
+                if (pairStarts.Contains(spawned) && SpawnChainPair(point, order, speed))
+                {
+                    spawned += 2;
+                    packLeft -= 2;
+                }
+                else
+                {
+                    SpawnZombie(point, plan[spawned], speed);
+                    spawned += 1;
+                    packLeft -= 1;
+                }
+                if (packLeft > 0)
                 {
                     yield return new WaitForSeconds(PackStagger);
                 }
@@ -508,7 +531,115 @@ public class WaveSpawner : MonoBehaviour
         return startCount + perWave * (wave - firstWave);
     }
 
-    private void SpawnZombie(SpawnPoint point, ZombieKind kind, float speed)
+    // ---- WORD CHAIN pairs ----
+
+    // Adds this wave's WORD CHAIN pairs to the plan: none before chainFirstWave,
+    // then chainStartCount, plus chainPerWave for every later wave. Each pair is
+    // two extra NORMAL zombies, next to each other in the plan (they come out at
+    // the same moment, from two doors), put in at a random moment of the wave. pairStarts gets the
+    // place of the first zombie of each pair.
+    private ZombieKind[] AddChainPairs(ZombieKind[] plan, int wave, out HashSet<int> pairStarts)
+    {
+        pairStarts = new HashSet<int>();
+        int pairs = CountForWave(wave, chainFirstWave, chainStartCount, chainPerWave);
+        if (pairs <= 0)
+        {
+            return plan;
+        }
+
+        // Each entry of 'units' is one zombie of the plan, or -1 for a whole pair.
+        List<int> units = new List<int>();
+        foreach (ZombieKind kind in plan)
+        {
+            units.Add((int)kind);
+        }
+        for (int p = 0; p < pairs; p++)
+        {
+            units.Insert(Random.Range(0, units.Count + 1), -1);
+        }
+
+        List<ZombieKind> result = new List<ZombieKind>();
+        foreach (int unit in units)
+        {
+            if (unit < 0)
+            {
+                pairStarts.Add(result.Count);
+                result.Add(ZombieKind.Normal);
+                result.Add(ZombieKind.Normal);
+            }
+            else
+            {
+                result.Add((ZombieKind)unit);
+            }
+        }
+        return result.ToArray();
+    }
+
+    // Two normal zombies at the same moment, but out of two DIFFERENT doors
+    // (point, and another spawn point of the area), carrying a short word and a
+    // longer word that starts with it (hunt / hunter). Both words are purple and
+    // a purple line links them across the area (ChainLink): typing the long word
+    // kills both. Returns false if no pair of words fits right now.
+    private bool SpawnChainPair(SpawnPoint point, List<SpawnPoint> areaPoints, float speed)
+    {
+        string[] words = WordBank.PickChainPair(UsedFirstLetters());
+        if (words == null)
+        {
+            return false;
+        }
+
+        // The other door: any spawn point of the area but this one (an area
+        // with a single spawn point uses it for both).
+        SpawnPoint otherPoint = point;
+        List<SpawnPoint> others = new List<SpawnPoint>();
+        foreach (SpawnPoint candidate in areaPoints)
+        {
+            if (candidate != point)
+            {
+                others.Add(candidate);
+            }
+        }
+        if (others.Count > 0)
+        {
+            otherPoint = others[Random.Range(0, others.Count)];
+            if (otherPoint.Door != null)
+            {
+                otherPoint.Door.BurstOpen();
+            }
+        }
+
+        // Which word comes out of which door is random too.
+        bool shortHere = Random.value < 0.5f;
+        Zombie shortOne = SpawnZombie(shortHere ? point : otherPoint, ZombieKind.Normal, speed, words[0]);
+        Zombie longOne = SpawnZombie(shortHere ? otherPoint : point, ZombieKind.Normal, speed, words[1]);
+        shortOne.MarkChainLinked();
+        longOne.MarkChainLinked();
+        ChainLink.Create(shortOne, longOne);
+
+        GameManager.Instance.RequestTip("word chain", "WORD CHAIN!",
+            "Two zombies are linked in PURPLE: \"" + words[0].ToLowerInvariant() + "\" and \""
+            + words[1].ToLowerInvariant() + "\".\n\n"
+            + "The long word starts with the short one. Type the LONG word:\n"
+            + "the short zombie dies on the way, then the long one.\n\n"
+            + "One word, two kills - and a WORD CHAIN bonus!",
+            Palette.WordChain);
+        return true;
+    }
+
+    // Called by the Boss's STOMP: a zombie crawls out of the ground at 'at' and
+    // walks at the player. A red one blown up next to the boss hurts the boss.
+    public Zombie SpawnBossMinion(Vector3 at, ZombieKind kind)
+    {
+        Vector3 towardPlayer = player.position - at;
+        towardPlayer.y = 0f;
+        Vector3 exit = at + towardPlayer.normalized * 1.5f;
+        SpawnPoint point = new SpawnPoint(at, exit, null, 0.3f);
+        return SpawnZombie(point, kind, zombieSpeed + zombieSpeedPerWave * 2f);
+    }
+
+    // Spawns one zombie at the spawn point. forcedWord: its word (a WORD CHAIN
+    // pair's); null = pick a word whose first letter is not on screen yet.
+    private Zombie SpawnZombie(SpawnPoint point, ZombieKind kind, float speed, string forcedWord = null)
     {
         // A small random offset so a pack does not stand in one spot.
         Vector2 offset = Random.insideUnitCircle * point.Spread;
@@ -516,9 +647,12 @@ public class WaveSpawner : MonoBehaviour
         Vector3 position = point.Position + side;
         Vector3 exit = point.Exit + side * 0.5f;
 
-        // Pick a word whose first letter is not on screen yet.
-        List<char> used = UsedFirstLetters();
-        string word = kind == ZombieKind.Armored ? WordBank.PickArmorWord(used) : WordBank.PickWord(used, kind);
+        string word = forcedWord;
+        if (word == null)
+        {
+            List<char> used = UsedFirstLetters();
+            word = kind == ZombieKind.Armored ? WordBank.PickArmorWord(used) : WordBank.PickWord(used, kind);
+        }
 
         Quaternion rotation = Quaternion.identity;
         Vector3 walk = exit - position;
@@ -545,6 +679,7 @@ public class WaveSpawner : MonoBehaviour
         {
             Tutorial.Once("armored", "ARMORED: the first word breaks its armor. Explosions kill it at once!", 6f);
         }
+        return zombie;
     }
 
     // Only used if an encounter has no spawn points: somewhere ahead of the player.
@@ -648,6 +783,12 @@ public class WaveSpawner : MonoBehaviour
         while (boss.IsAlive)
         {
             yield return null;
+        }
+
+        // Zombies it summoned fall down with it.
+        foreach (Zombie minion in new List<Zombie>(aliveZombies))
+        {
+            minion.KillByBlast(boss.BodyCenter);
         }
 
         // 3. Let it sink into the ground.

@@ -51,6 +51,7 @@ public static class Palette
     public static readonly Color WordCrate = new Color(0.45f, 1.00f, 0.50f);
     public static readonly Color WordQuiz = new Color(0.40f, 0.90f, 1.00f);
     public static readonly Color WordArmor = new Color(0.75f, 0.80f, 0.90f);
+    public static readonly Color WordChain = new Color(0.82f, 0.52f, 1.00f); // purple: a WORD CHAIN pair (hunt / hunter) and its link line
 
     private static readonly Dictionary<Color, Material> litMaterials = new Dictionary<Color, Material>();
     private static readonly Dictionary<Color, Material> unlitMaterials = new Dictionary<Color, Material>();

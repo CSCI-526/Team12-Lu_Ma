@@ -34,7 +34,8 @@ public static class WordBank
         "SAW", "SKIN", "SCAR", "SLAY", "SOUL", "TOMB", "TUSK", "TAR", "TEAR", "TOIL",
         "URN", "UGLY", "URGE", "UNDO", "VEIN", "VILE", "VOID", "VEX", "VAT", "WAIL",
         "WORM", "WAR", "WEB", "WOE", "WAKE", "XRAY", "YELL", "YAWN", "YELP", "YUCK",
-        "ZAP", "ZONE", "ZERO", "ZEST"
+        "ZAP", "ZONE", "ZERO", "ZEST",
+        "GOD" // (word family: GOD -> GODLESS)
     };
 
     // 5-7 letters: medium blast.
@@ -50,7 +51,10 @@ public static class WordBank
         "POISON", "PROWL", "QUIVER", "QUAKE", "QUEASY", "RAVEN", "ROTTEN", "RABID", "RAMPAGE", "REAPER",
         "SCREAM", "SHADOW", "SEVER", "SKULL", "SPIDER", "SPECTER", "TERROR", "TOXIC", "TALON", "THROAT",
         "TWITCH", "UNDEAD", "UNHOLY", "UNSEEN", "UPROAR", "VENOM", "VICTIM", "VAMPIRE", "VULTURE", "WICKED",
-        "WRAITH", "WARDEN", "WITHER", "YONDER", "YEARN", "ZOMBIE", "ZEALOT", "ZIGZAG"
+        "WRAITH", "WARDEN", "WITHER", "YONDER", "YEARN", "ZOMBIE", "ZEALOT", "ZIGZAG",
+        // Longer forms of short words, so WORD CHAINS happen (typing "hunter" also kills "hunt"):
+        "GODLESS", "HEXED", "RIPPER", "DEADLY", "HUNTER", "LURKER", "PAINFUL", "SLAYER", "GUTTED",
+        "HOWLING", "WAILING", "MOANING", "BURNING", "SCARRED"
     };
 
     // 8-12 letters: big blast, but a long commitment while the horde closes in.
@@ -262,6 +266,38 @@ public static class WordBank
         // 4. Every first letter is taken (only with a huge crowd). A duplicate
         //    letter cannot be avoided; typing it will target the NEAREST match.
         return rolledBucket[Random.Range(0, rolledBucket.Length)];
+    }
+
+    // WORD CHAIN PAIRS: a short word and a longer word that starts with it
+    // ("HUNT" and "HUNTER"), both normal-zombie words (short / medium lists),
+    // whose first letter nothing on screen uses. Typing the long word kills
+    // both (see TypingController). Returns null if no pair fits.
+    public static string[] PickChainPair(List<char> usedFirstLetters)
+    {
+        List<string> words = new List<string>(ShortWords);
+        words.AddRange(MediumWords);
+
+        List<string[]> pairs = new List<string[]>();
+        foreach (string shortWord in words)
+        {
+            if (usedFirstLetters.Contains(shortWord[0]))
+            {
+                continue;
+            }
+            foreach (string longWord in words)
+            {
+                if (longWord.Length > shortWord.Length && longWord.StartsWith(shortWord))
+                {
+                    pairs.Add(new[] { shortWord, longWord });
+                }
+            }
+        }
+
+        if (pairs.Count == 0)
+        {
+            return null;
+        }
+        return pairs[Random.Range(0, pairs.Count)];
     }
 
     // Returns a random word from the bucket whose first letter is not in

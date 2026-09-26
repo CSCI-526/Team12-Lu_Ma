@@ -144,7 +144,7 @@ public class Explosion : MonoBehaviour
         }
     }
 
-    // 3. The boss (only barrels and lure bombs hurt it: bossDamage is 0 for red zombies).
+    // 3. The boss: barrels, lure bombs and red zombies (the boss summons them) hurt it.
     private void HitBoss(WaveSpawner waveSpawner, float bossDamage)
     {
         Boss boss = waveSpawner.CurrentBoss;

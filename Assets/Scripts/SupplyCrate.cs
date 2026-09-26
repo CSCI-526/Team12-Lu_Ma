@@ -114,7 +114,8 @@ public class SupplyCrate : MonoBehaviour, ITypingTarget
         }
         Destroy(cube);
 
-        string text;
+        // A power that is already full gives nothing, so it shows no "+1" either.
+        string text = null;
         if (Kind == SupplyKind.Health)
         {
             GameManager.Instance.Heal(HealAmount);
@@ -122,15 +123,22 @@ public class SupplyCrate : MonoBehaviour, ITypingTarget
         }
         else if (Kind == SupplyKind.Lure)
         {
-            GameManager.Instance.Powers.AddCharge(PowerKind.Lure);
-            text = "+1 LURE BOMB";
+            if (GameManager.Instance.Powers.AddCharge(PowerKind.Lure))
+            {
+                text = "+1 LURE BOMB";
+            }
         }
         else
         {
-            GameManager.Instance.Powers.AddCharge(PowerKind.Freeze);
-            text = "+1 FREEZE";
+            if (GameManager.Instance.Powers.AddCharge(PowerKind.Freeze))
+            {
+                text = "+1 FREEZE";
+            }
         }
-        hud.ShowFloatingText(transform.position + Vector3.up, text, Palette.WordCrate);
+        if (text != null)
+        {
+            hud.ShowFloatingText(transform.position + Vector3.up, text, Palette.WordCrate);
+        }
     }
 
     // Rebuilds the rich text: typed letters in yellow, the rest in green.

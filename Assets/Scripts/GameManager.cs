@@ -19,6 +19,7 @@
 //
 // The references below (hud, spawner, powers) are wired in the scene.
 // ---------------------------------------------------------------------------
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -28,6 +29,7 @@ public enum GameState
     Start,    // Start panel is showing, waiting for the Start button / Enter
     Playing,  // riding, fighting, typing
     Paused,   // Esc was pressed: pause panel, or the 3-2-1 countdown before play resumes
+    Tip,      // a first-time tip box is showing (game frozen); Enter or OK continues
     Won,      // the last area was cleared, "You survived" panel is showing
     Lost      // health reached 0, "You died" panel is showing
 }
@@ -113,6 +115,78 @@ public class GameManager : MonoBehaviour
         Stats.Seconds += Time.deltaTime;
     }
 
+    // Tips are opened here, at the END of the frame, so everything that was
+    // already happening this frame (bullets landing, a chain of kills) finishes first.
+    private void LateUpdate()
+    {
+        if (State == GameState.Playing && pendingTips.Count > 0)
+        {
+            ShowNextTip();
+        }
+    }
+
+    // ---- First-time tips ----
+    // Something new the first time (the first lure bomb, the first freeze, the
+    // first WORD CHAIN pair) pauses the game with a box that explains it (built
+    // by HUD). Enter or the OK button continues. Static, like Tutorial: after a
+    // Restart they are not shown again.
+
+    private struct PendingTip
+    {
+        public string Title;
+        public string Text;
+        public Color Color;
+    }
+
+    private static readonly HashSet<string> tipsShown = new HashSet<string>();
+    private readonly Queue<PendingTip> pendingTips = new Queue<PendingTip>();
+
+    // Shows the tip called key once (it opens at the end of this frame).
+    public void RequestTip(string key, string title, string text, Color titleColor)
+    {
+        if (!tipsShown.Add(key))
+        {
+            return; // already explained
+        }
+        PendingTip tip;
+        tip.Title = title;
+        tip.Text = text;
+        tip.Color = titleColor;
+        pendingTips.Enqueue(tip);
+    }
+
+    // Called by Powers when a charge is gained. Only the first one of each kind shows a tip.
+    public void RequestPowerTip(PowerKind kind, string title, string text)
+    {
+        RequestTip("power " + kind, title, text, kind == PowerKind.Lure ? Palette.LureCrate : Palette.FreezeCrate);
+    }
+
+    private void ShowNextTip()
+    {
+        PendingTip tip = pendingTips.Dequeue();
+        State = GameState.Tip;
+        Time.timeScale = 0f; // everything waits for the player
+        hud.ShowPowerTip(tip.Title, tip.Text, tip.Color);
+    }
+
+    // Called by the tip box's OK button and by Enter (TypingController).
+    public void ConfirmTip()
+    {
+        if (State != GameState.Tip)
+        {
+            return;
+        }
+
+        hud.HidePowerTip();
+        if (pendingTips.Count > 0)
+        {
+            ShowNextTip(); // got both powers at once: explain the next one too
+            return;
+        }
+        State = GameState.Playing;
+        Time.timeScale = 1f;
+    }
+
     // Called by the Start button (wired in the scene) and by StartOrRestart().
     public void StartGame()
     {
@@ -134,7 +208,8 @@ public class GameManager : MonoBehaviour
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
-    // Called by TypingController when Enter is pressed outside of play.
+    // Called by TypingController when Enter is pressed outside of play
+    // (Start panel, results screens, or a first-time power tip).
     public void StartOrRestart()
     {
         if (State == GameState.Start)
@@ -144,6 +219,10 @@ public class GameManager : MonoBehaviour
         else if (State == GameState.Won || State == GameState.Lost)
         {
             RestartGame();
+        }
+        else if (State == GameState.Tip)
+        {
+            ConfirmTip();
         }
     }
 
@@ -235,6 +314,23 @@ public class GameManager : MonoBehaviour
     }
 
     // ---- Kills and score ----
+
+    // WORD CHAIN (called by TypingController): one run of typing finished
+    // 'words' words, e.g. typing "hunter" finished "hunt" on the way. Every one
+    // of those kills already counts as usual (score, combo +1 each) when its
+    // bullet lands; the chain adds a bonus of PointsPerKill x combo x words.
+    public void AddWordChain(int words)
+    {
+        if (words < 2 || State == GameState.Lost)
+        {
+            return;
+        }
+
+        int bonus = PointsPerKill * Combo * words;
+        Score += bonus;
+        hud.SetScore(Score);
+        hud.ShowWordChain(words, bonus);
+    }
 
     // Called for a single kill (a normal zombie, a boss part, an orb...).
     // Returns the points it was worth.

@@ -13,6 +13,8 @@
 //   - SHAKE:     CameraDirector.Shake(0.5f);   explosions, hits ("trauma" 0..1)
 //   - KICK:      CameraDirector.Kick(1f);      every shot tips the view up a bit
 //   - a running head-bob between fights, and a slow breathing sway all the time.
+//   - WIDE VIEW: while the player aims a lure bomb (holds 1) or types a word,
+//     the field of view widens (wideFieldOfView), so more of the fight is seen.
 //   - on the Start panel and the results screens the view drifts slowly
 //     left and right, so the scene behind the panel feels alive.
 //
@@ -61,6 +63,9 @@ public class CameraDirector : MonoBehaviour
 
     [Header("Field of view")]
     [SerializeField] private float baseFieldOfView = 65f;     // degrees, top to bottom of the screen
+    [SerializeField] private float wideFieldOfView = 78f;     // while aiming a lure bomb or typing a word: see more around
+    [SerializeField] private float wideLingerSeconds = 1.2f;  // stay wide this long after the last word (no zoom in and out between words)
+    [SerializeField] private float fieldOfViewSmoothTime = 0.35f; // seconds to widen / narrow
 
     [Header("Head bob (while running between fights) and breathing")]
     [SerializeField] private float bobHeight = 0.06f;         // metres up and down
@@ -102,6 +107,9 @@ public class CameraDirector : MonoBehaviour
     private float rideWeight;            // 0 = standing still, 1 = riding: scales the head-bob
     private float bobTime;
     private float breathTime;
+    private float fieldOfView;           // the field of view now (glides between base and wide)
+    private float fieldOfViewVelocity;
+    private float wideTimer;             // seconds the view stays wide after the last word / aim
 
     // Adds screen shake. trauma: 0..1 (0.2 = a bump, 0.6 = a close explosion, 1 = huge).
     public static void Shake(float trauma)
@@ -131,6 +139,7 @@ public class CameraDirector : MonoBehaviour
         cam.nearClipPlane = NearClip;
         cam.farClipPlane = FarClip;
         cam.fieldOfView = baseFieldOfView;
+        fieldOfView = baseFieldOfView;
 
         basePosition = transform.localPosition; // eye height from the scene (0, 1.7, 0)
         rail = GetComponentInParent<RailMover>();
@@ -223,7 +232,39 @@ public class CameraDirector : MonoBehaviour
         float roll = bobRoll + shakeRoll;
         transform.localRotation = Quaternion.Euler(-pitchUp, yaw, roll);
         transform.localPosition = basePosition + Vector3.up * bobHeightNow + transform.localRotation * shakeOffset;
-        cam.fieldOfView = baseFieldOfView;
+        cam.fieldOfView = UpdateFieldOfView(deltaTime, playing);
+    }
+
+    // ---- Wide view ----
+
+    // The field of view for this frame: wide while a lure bomb is being aimed or
+    // a word is being typed (and wideLingerSeconds after), normal otherwise,
+    // gliding between the two. Holds still while paused.
+    private float UpdateFieldOfView(float deltaTime, bool playing)
+    {
+        bool busy = false;
+        if (playing)
+        {
+            bool aimingLure = GameManager.Instance.Powers != null && GameManager.Instance.Powers.IsAiming;
+            bool typingWord = typing != null && typing.CurrentTarget != null;
+            busy = aimingLure || typingWord;
+        }
+
+        if (busy)
+        {
+            wideTimer = wideLingerSeconds;
+        }
+        else
+        {
+            wideTimer = Mathf.Max(0f, wideTimer - deltaTime);
+        }
+
+        float wanted = wideTimer > 0f ? wideFieldOfView : baseFieldOfView;
+        if (deltaTime > 0f)
+        {
+            fieldOfView = Mathf.SmoothDamp(fieldOfView, wanted, ref fieldOfViewVelocity, fieldOfViewSmoothTime, Mathf.Infinity, deltaTime);
+        }
+        return fieldOfView;
     }
 
     // ---- Focus ----

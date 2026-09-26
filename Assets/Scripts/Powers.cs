@@ -2,7 +2,11 @@
 // ---------------------------------------------------------------------------
 // The player's two special powers, used with the number keys:
 //
-//   [1] LURE BOMB - thrown about throwDistance metres ahead, where you look.
+//   [1] LURE BOMB - HOLD 1: a dashed arc (ThrowArc) shows where it will land,
+//       throwDistance metres ahead, where you look, and a hint (bottom-right)
+//       says to use the ARROW keys: Left / Right turn the throw, Up / Down
+//       move the landing point farther / closer. RELEASE 1 to throw it there
+//       (a quick tap throws straight ahead).
 //       It blinks; every zombie near it walks to it and crowds around it
 //       (they forget about you), then it explodes. See LureBomb.
 //   [2] FREEZE    - every zombie, energy orb and the boss stop for
@@ -13,8 +17,9 @@
 // charge, alternating lure bomb, freeze, lure bomb, ... A wrong key or getting
 // hurt resets the combo, so accurate typing is what earns powers.
 //
-// Lives on the GameManager object. TypingController calls TryUseLure /
-// TryUseFreeze; GameManager calls OnComboChanged every time the combo changes.
+// Lives on the GameManager object. TypingController calls BeginLureAim (1 down),
+// ReleaseLureAim (1 up) and TryUseFreeze; GameManager calls OnComboChanged
+// every time the combo changes.
 // ---------------------------------------------------------------------------
 using UnityEngine;
 
@@ -31,8 +36,12 @@ public class Powers : MonoBehaviour
     [SerializeField] private int killsPerReward = 5;      // a combo of this many kills earns a charge
 
     [Header("Lure bomb")]
-    [SerializeField] private float throwDistance = 9f;    // metres ahead of the player
+    [SerializeField] private float throwDistance = 9f;    // metres ahead of the player (a quick tap)
     [SerializeField] private float minThrowDistance = 3f; // never closer than this (e.g. facing a wall)
+    [SerializeField] private float maxThrowDistance = 22f; // the farthest the Up arrow can push it
+    [SerializeField] private float aimTurnSpeed = 90f;    // degrees per second the Left / Right arrows turn the throw
+    [SerializeField] private float maxAimTurn = 60f;      // degrees left or right of where the camera looks, at most
+    [SerializeField] private float aimDistanceSpeed = 10f; // metres per second the Up / Down arrows move the landing point
 
     [Header("Freeze")]
     [SerializeField] private float freezeSeconds = 4f;
@@ -54,6 +63,19 @@ public class Powers : MonoBehaviour
     public int LureCharges { get; private set; }
     public int FreezeCharges { get; private set; }
 
+    // Lure bomb aiming (while the 1 key is held).
+    private bool aiming;
+
+    // True while the player holds 1 to aim a lure bomb (the camera widens its view).
+    public bool IsAiming
+    {
+        get { return aiming; }
+    }
+    private ThrowArc arc;        // the dashed preview, built on first use
+    private float aimTurn;       // degrees the throw is turned right (< 0 = left) by the arrow keys
+    private float aimDistance;   // metres: starts at throwDistance, Up / Down change it
+    private Vector2 arrowInput;  // this frame's arrow keys: x = Right - Left, y = Up - Down (set by TypingController)
+
     private void Awake()
     {
         freezeTimeLeft = 0f;
@@ -67,6 +89,8 @@ public class Powers : MonoBehaviour
 
     private void Update()
     {
+        UpdateAim();
+
         if (freezeTimeLeft <= 0f || GameManager.Instance.State != GameState.Playing)
         {
             return;
@@ -82,22 +106,55 @@ public class Powers : MonoBehaviour
 
     // ---- Earning charges ----
 
-    // Gives the player one more charge (never more than maxCharges).
-    public void AddCharge(PowerKind kind)
+    // Gives the player one more charge. Returns false (and shows nothing) if
+    // that power is already full (maxCharges). On a gain, a "+1" rises next to
+    // the power on the HUD, and the very first charge of each power pauses the
+    // game with a tip box explaining it (GameManager.RequestPowerTip).
+    public bool AddCharge(PowerKind kind)
     {
         if (kind == PowerKind.Lure)
         {
-            LureCharges = Mathf.Min(maxCharges, LureCharges + 1);
-            Tutorial.Once("lure", "You got a LURE BOMB! Press 1: zombies crowd around it, then it explodes.", 7f);
+            if (LureCharges >= maxCharges)
+            {
+                return false;
+            }
+            LureCharges += 1;
         }
         else
         {
-            FreezeCharges = Mathf.Min(maxCharges, FreezeCharges + 1);
-            Tutorial.Once("freeze", "You got a FREEZE! Press 2 to stop every zombie for a few seconds.", 7f);
+            if (FreezeCharges >= maxCharges)
+            {
+                return false;
+            }
+            FreezeCharges += 1;
         }
 
         RefreshHud();
         hud.PulsePower(kind);
+        hud.ShowPowerGain(kind);
+        GameManager.Instance.RequestPowerTip(kind, TipTitle(kind), TipText(kind));
+        return true;
+    }
+
+    // ---- The first-time tip box (shown by GameManager, drawn by HUD) ----
+
+    private static string TipTitle(PowerKind kind)
+    {
+        return kind == PowerKind.Lure ? "YOU GOT A LURE BOMB!" : "YOU GOT A FREEZE!";
+    }
+
+    private string TipText(PowerKind kind)
+    {
+        if (kind == PowerKind.Lure)
+        {
+            return "Zombies near it walk to it and crowd around it, then it explodes.\n\n"
+                + "HOLD 1 to aim: a dashed arc shows where it will land.\n"
+                + "ARROW KEYS steer it: LEFT / RIGHT = direction, UP / DOWN = distance.\n"
+                + "RELEASE 1 to throw. (A quick tap throws it straight ahead.)";
+        }
+        return "Press 2 to freeze every zombie, energy orb and the boss for "
+            + freezeSeconds.ToString("0.#") + " seconds.\n\n"
+            + "Keep typing while they cannot move!";
     }
 
     // Called by GameManager whenever the combo changes (up by one per kill, or back to 1).
@@ -128,7 +185,8 @@ public class Powers : MonoBehaviour
 
     // ---- Using charges (called by TypingController) ----
 
-    public void TryUseLure()
+    // The 1 key went down: start aiming (the dashed arc shows at once).
+    public void BeginLureAim()
     {
         if (LureCharges <= 0)
         {
@@ -136,12 +194,80 @@ public class Powers : MonoBehaviour
             return;
         }
 
+        aiming = true;
+        aimTurn = 0f;                 // every aim starts straight ahead...
+        aimDistance = throwDistance;  // ...at the usual distance
+        if (arc == null)
+        {
+            arc = ThrowArc.Create();
+        }
+        hud.SetAimHint(true);
+        UpdateAim();
+    }
+
+    // The 1 key came up: throw where the arc shows now (a quick tap, with no
+    // arrow key pressed, throws straight ahead at throwDistance).
+    public void ReleaseLureAim()
+    {
+        if (!aiming)
+        {
+            return;
+        }
+
+        Vector3 landing = LandingPoint(aimDistance);
+        StopAiming();
+
         LureCharges -= 1;
         RefreshHud();
         hud.PulsePower(PowerKind.Lure);
-        // Thrown from just below the camera.
-        Vector3 hand = Camera.main.transform.TransformPoint(new Vector3(0.2f, -0.4f, 0.5f));
-        LureBomb.Throw(hand, LandingPoint());
+        LureBomb.Throw(Hand(), landing);
+    }
+
+    // Stops aiming without throwing (e.g. the game was paused); no charge is used.
+    private void StopAiming()
+    {
+        aiming = false;
+        if (arc != null)
+        {
+            arc.Hide();
+        }
+        hud.SetAimHint(false);
+    }
+
+    // Every frame while aiming: steer with the arrow keys and redraw the arc.
+    private void UpdateAim()
+    {
+        if (!aiming)
+        {
+            return;
+        }
+        if (GameManager.Instance.State != GameState.Playing)
+        {
+            StopAiming(); // paused or game over: cancel, press 1 again to aim
+            return;
+        }
+
+        // Left / Right: turn the throw, within maxAimTurn of where the camera looks.
+        aimTurn = Mathf.Clamp(aimTurn + arrowInput.x * aimTurnSpeed * Time.deltaTime, -maxAimTurn, maxAimTurn);
+
+        // Up / Down: move the landing point farther / closer.
+        aimDistance = Mathf.Clamp(aimDistance + arrowInput.y * aimDistanceSpeed * Time.deltaTime,
+            minThrowDistance, maxThrowDistance);
+
+        arc.Show(Hand(), LandingPoint(aimDistance));
+    }
+
+    // Called by TypingController every frame with the arrow keys held:
+    // x = Right minus Left, y = Up minus Down (each -1, 0 or 1). Used only while aiming.
+    public void SetAimInput(Vector2 arrows)
+    {
+        arrowInput = arrows;
+    }
+
+    // Where the bomb leaves the hand: just below and right of the camera.
+    private static Vector3 Hand()
+    {
+        return Camera.main.transform.TransformPoint(new Vector3(0.2f, -0.4f, 0.5f));
     }
 
     public void TryUseFreeze()
@@ -158,9 +284,9 @@ public class Powers : MonoBehaviour
         freezeTimeLeft = freezeSeconds;
     }
 
-    // Where the lure bomb lands: throwDistance metres ahead along the ground,
+    // Where the lure bomb lands: 'wanted' metres ahead along the ground,
     // in the direction the camera looks, but short of any wall in the way.
-    private Vector3 LandingPoint()
+    private Vector3 LandingPoint(float wanted)
     {
         Transform view = Camera.main.transform;
         Vector3 ahead = view.forward;
@@ -170,11 +296,12 @@ public class Powers : MonoBehaviour
             ahead = player.forward; // looking straight down or up: use the body's direction
         }
         ahead.Normalize();
+        ahead = Quaternion.AngleAxis(aimTurn, Vector3.up) * ahead; // turned with Left / Right
 
-        float distance = throwDistance;
+        float distance = wanted;
         Vector3 from = player.position + Vector3.up * 1f;
         RaycastHit hit;
-        if (Physics.Raycast(from, ahead, out hit, throwDistance))
+        if (Physics.Raycast(from, ahead, out hit, wanted))
         {
             distance = Mathf.Max(minThrowDistance, hit.distance - 0.8f);
         }

@@ -68,6 +68,9 @@ public class Zombie : MonoBehaviour, ITypingTarget
     // The word sits this many metres above the top of the head.
     private const float LabelAboveHead = 0.3f;
 
+    // A red zombie that blows up next to the boss (the boss summons them) hurts it this much.
+    private const float BlastBossDamage = 100f;
+
     // A zombie this far from the player can never matter again: it is removed.
     private const float LostDistance = 120f;
 
@@ -171,6 +174,17 @@ public class Zombie : MonoBehaviour, ITypingTarget
         Label = spawner.Hud.CreateWordLabel(new Vector2(0.5f, 0f)); // centred, just above the head
         Label.color = HasArmor ? Palette.WordArmor : Color.white;
         RefreshLabel();
+    }
+
+    // True for the two zombies of a WORD CHAIN pair (hunt / hunter).
+    public bool IsChainLinked { get; private set; }
+
+    // Called by WaveSpawner.SpawnChainPair: the word turns purple, like the
+    // ChainLink line between the pair, so the player sees they belong together.
+    public void MarkChainLinked()
+    {
+        IsChainLinked = true;
+        Label.color = Palette.WordChain;
     }
 
     private void Update()
@@ -385,7 +399,7 @@ public class Zombie : MonoBehaviour, ITypingTarget
         {
             // The explosion kills this zombie too (it stands in its own blast) and
             // scores everything it kills together.
-            Explosion.Detonate(transform.position, BlastRadius, null, 0f);
+            Explosion.Detonate(transform.position, BlastRadius, null, BlastBossDamage);
             return;
         }
 

@@ -5,6 +5,9 @@
 //   - "Wave 2 / 5", Score and Combo (top-right). Under them: what the combo
 //     earns next ("Next: FREEZE in 3 kills" + a thin bar)
 //   - the powers (bottom-left): "[1] LURE BOMB" and "[2] FREEZE" with their charges
+//   - while 1 is held (aiming the lure bomb): an arrow-keys hint in a dark box
+//     (bottom-right); a "+1" next to a power whenever a charge is gained
+//   - the first-time power tip box (the game waits until Enter / OK)
 //   - the current target's word (bottom-centre) and a hint box just above it
 //   - red arrows at the screen edges pointing at zombies you cannot see
 //   - floating texts ("+30 HEALTH") that rise from a point in the world
@@ -226,16 +229,15 @@ public class HUD : MonoBehaviour
     private TMP_Text multiKillText; // null until the first multi-kill
     private float multiKillAge = float.MaxValue;
 
+    // A WORD CHAIN (typing "hunter" also killed "hunt"): the same big popup as a
+    // multi-kill, e.g. "WORD CHAIN x2!" with the bonus points under it.
+    public void ShowWordChain(int words, int bonusPoints)
+    {
+        ShowBigPopup("WORD CHAIN x" + words + "!", "+" + bonusPoints + " BONUS");
+    }
+
     public void ShowMultiKill(int kills, int points)
     {
-        if (multiKillText == null)
-        {
-            multiKillText = CreateText(transform, "MultiKill", "", 96f, new Vector2(0f, 230f));
-            multiKillText.color = new Color(1f, 0.6f, 0.15f);
-            multiKillText.rectTransform.sizeDelta = new Vector2(1400f, 220f);
-            multiKillText.fontStyle = FontStyles.Bold;
-        }
-
         string title;
         if (kills == 2)
         {
@@ -254,7 +256,21 @@ public class HUD : MonoBehaviour
             title = "MASSACRE!";
         }
 
-        multiKillText.text = title + "\n<size=55%>x" + kills + " SCORE  +" + points + "</size>";
+        ShowBigPopup(title, "x" + kills + " SCORE  +" + points);
+    }
+
+    // The big popup above the middle of the screen: a title, and a smaller line under it.
+    private void ShowBigPopup(string title, string subtitle)
+    {
+        if (multiKillText == null)
+        {
+            multiKillText = CreateText(transform, "MultiKill", "", 96f, new Vector2(0f, 230f));
+            multiKillText.color = new Color(1f, 0.6f, 0.15f);
+            multiKillText.rectTransform.sizeDelta = new Vector2(1400f, 220f);
+            multiKillText.fontStyle = FontStyles.Bold;
+        }
+
+        multiKillText.text = title + "\n<size=55%>" + subtitle + "</size>";
         multiKillText.transform.SetAsLastSibling();
         multiKillText.gameObject.SetActive(true);
         multiKillAge = 0f;
@@ -322,6 +338,7 @@ public class HUD : MonoBehaviour
         HideBossBar();
         HidePausePanel();
         HideCountdown();
+        HidePowerTip();
         HideQuiz();
         if (multiKillText != null)
         {
@@ -832,6 +849,143 @@ public class HUD : MonoBehaviour
 
             ApplyPowerRowLook(row, 0f, 0f);
         }
+    }
+
+    // ---- Lure bomb aiming hint (bottom-right, while 1 is held) ----
+
+    private static readonly Vector2 BottomRight = new Vector2(1f, 0f);
+    private const string AimHintText =
+        "Use the ARROW KEYS to aim\n<size=75%>LEFT / RIGHT: direction    UP / DOWN: distance\nRelease 1 to throw</size>";
+
+    private const float AimHintFontSize = 22f;
+    private const float AimHintPadding = 14f;   // space between the text and the edge of its box
+
+    private Image aimHintBox; // null until the first time 1 is held
+
+    // Shown by Powers while the player holds 1 to aim the lure bomb: the text in a
+    // see-through black box, sized to fit the text.
+    public void SetAimHint(bool show)
+    {
+        if (!show)
+        {
+            if (aimHintBox != null)
+            {
+                aimHintBox.gameObject.SetActive(false);
+            }
+            return;
+        }
+
+        if (aimHintBox == null)
+        {
+            EnsureLayers();
+            aimHintBox = CreateImage("AimHint", readoutLayer, new Color(0f, 0f, 0f, 0.6f));
+
+            TMP_Text text = CreateText(aimHintBox.rectTransform, "Text", AimHintText, AimHintFontSize, Vector2.zero);
+            text.alignment = TextAlignmentOptions.Center;
+            text.fontStyle = FontStyles.Bold;
+            text.color = Palette.BlastOrange; // the same orange as the dashed arc
+            text.textWrappingMode = TextWrappingModes.NoWrap;
+
+            Vector2 textSize = text.GetPreferredValues(AimHintText);
+            Vector2 boxSize = textSize + Vector2.one * (AimHintPadding * 2f);
+            PlaceRect(aimHintBox.rectTransform, BottomRight, BottomRight, new Vector2(-powersMargin, powersMargin), boxSize);
+            StretchToParent(text.rectTransform);
+        }
+        aimHintBox.gameObject.SetActive(true);
+    }
+
+    // ---- "+1" next to a power (bottom-left) when a charge is gained ----
+
+    private const float GainRiseDistance = 36f;  // canvas units it floats up
+    private const float GainSeconds = 1f;
+
+    // A "+1" appears just right of that power's row, floats up and fades out.
+    public void ShowPowerGain(PowerKind kind)
+    {
+        if (powersPanel == null)
+        {
+            BuildPowers();
+        }
+
+        int row = (int)kind;
+        TMP_Text plusOne = CreateText(powersPanel, "PlusOne", "+1", 34f, Vector2.zero);
+        RectTransform rowRect = powerRows[row];
+        Vector2 start = rowRect.anchoredPosition + new Vector2(PowerPipsX + 140f, 0f);
+        PlaceRect(plusOne.rectTransform, BottomLeft, LeftMiddle, start, new Vector2(80f, PowerRowHeight));
+        plusOne.alignment = TextAlignmentOptions.Left;
+        plusOne.fontStyle = FontStyles.Bold;
+        plusOne.color = kind == PowerKind.Lure ? Palette.LureCrate : Palette.FreezeCrate;
+        plusOne.fontSharedMaterial = OutlineMaterial(plusOne);
+        StartCoroutine(FloatAndFade(plusOne, start));
+    }
+
+    // Game time: while a tip box pauses the game, the "+1" waits, then plays.
+    private System.Collections.IEnumerator FloatAndFade(TMP_Text text, Vector2 start)
+    {
+        for (float time = 0f; time < GainSeconds; time += Time.deltaTime)
+        {
+            float progress = time / GainSeconds;
+            text.rectTransform.anchoredPosition = start + Vector2.up * GainRiseDistance * progress;
+            text.alpha = 1f - progress * progress; // stays bright, then fades at the end
+            yield return null;
+        }
+        Destroy(text.gameObject);
+    }
+
+    // ---- First-time power tip box (the game is frozen while it shows) ----
+
+    private GameObject tipPanel;   // null until the first tip
+    private TMP_Text tipTitle;
+    private TMP_Text tipBody;
+
+    public void ShowPowerTip(string title, string body, Color titleColor)
+    {
+        if (tipPanel == null)
+        {
+            BuildTipPanel();
+        }
+        tipTitle.text = title;
+        tipTitle.color = titleColor;
+        tipBody.text = body;
+        tipPanel.transform.SetAsLastSibling(); // on top of everything
+        tipPanel.SetActive(true);
+    }
+
+    public void HidePowerTip()
+    {
+        if (tipPanel != null)
+        {
+            tipPanel.SetActive(false);
+        }
+    }
+
+    // TipPanel (dark full-screen) > Box > Title, Body, "Press ENTER to continue", OK button.
+    private void BuildTipPanel()
+    {
+        tipPanel = new GameObject("TipPanel", typeof(RectTransform), typeof(Image));
+        RectTransform panelRect = tipPanel.GetComponent<RectTransform>();
+        panelRect.SetParent(transform, false);
+        StretchToParent(panelRect);
+        tipPanel.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.55f);
+
+        Image box = CreateImage("Box", panelRect, new Color(0.03f, 0.05f, 0.1f, 0.92f));
+        PlaceRect(box.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1040f, 520f));
+
+        tipTitle = CreateText(box.rectTransform, "Title", "", 56f, new Vector2(0f, 190f));
+        tipTitle.fontStyle = FontStyles.Bold;
+
+        tipBody = CreateText(box.rectTransform, "Body", "", 30f, new Vector2(0f, 20f));
+        tipBody.rectTransform.sizeDelta = new Vector2(940f, 250f);
+        tipBody.textWrappingMode = TextWrappingModes.Normal;
+
+        TMP_Text hint = CreateText(box.rectTransform, "Hint", "Press ENTER to continue", 26f, new Vector2(0f, -150f));
+        hint.color = SmallTextColor;
+        CreateButton(box.rectTransform, "OkButton", "OK", new Vector2(0f, -210f), OnTipOkClicked);
+    }
+
+    private void OnTipOkClicked()
+    {
+        GameManager.Instance.ConfirmTip();
     }
 
     // ---- Combo reward (top-right, under the Combo text) ----

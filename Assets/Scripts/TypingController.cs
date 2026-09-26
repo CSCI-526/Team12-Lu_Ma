@@ -3,34 +3,46 @@
 // The ONLY input in the game: reads the keyboard and turns letters into shots.
 //
 // Rules:
-//   - No target yet: the typed letter picks the NEAREST target (zombie, boss
+//   - Nothing typed yet: the typed letter picks EVERY target (zombie, boss
 //     part, energy orb, barrel, supply crate, quiz answer - see ITypingTarget)
-//     whose word starts with that letter, and counts as its first letter.
-//     If nothing matches, it is a wrong key.
-//   - Target exists: the next expected letter advances the word. Any other
-//     letter is a wrong key.
-//   - EVERY correct letter fires a bullet at the target (it makes a zombie
-//     stagger). The LAST letter fires the killing shot: when that bullet hits,
-//     it calls CompleteWord() (a zombie dies or explodes, a barrel blows up...).
+//     whose word starts with it: the CANDIDATES. Usually just one, because
+//     new words avoid first letters already on screen. If nothing matches, it
+//     is a wrong key.
+//   - Then each letter keeps the candidates whose next letter it is (the
+//     others drop out). If it matches none of them, it is a wrong key.
+//   - WORD CHAIN: word families (hunt / hunter, go / god) share a start on
+//     purpose. A word that is finished gets its killing shot while the longer
+//     ones stay candidates, so typing "hunter" kills "hunt" on the way. Each
+//     kill counts as usual (score, combo +1); 2+ words finished in one run
+//     also give a WORD CHAIN bonus (GameManager.AddWordChain).
+//   - The bottom word box shows every candidate (shortest first), so it
+//     always shows what the keys are hitting.
+//   - EVERY correct letter fires a bullet at the nearest candidate (it makes a
+//     zombie stagger). A finishing letter fires the killing shot: when that
+//     bullet hits, it calls CompleteWord() (a zombie dies or explodes...).
 //   - Words are stored UPPERCASE, shown in lowercase, and typing them is
 //     case-insensitive. The boss's energy orb words (e.g. "Sp@rk") are
 //     case-sensitive and may contain digits and symbols, which must be typed
 //     exactly. Digits and symbols are ignored while no orb is around.
 //   - A wrong key never resets progress. The screen flashes red and the
 //     combo resets.
-//   - 1 throws a lure bomb, 2 uses the freeze power (see Powers). No word
-//     contains those two keys, so they never clash with typing.
+//   - 1: TAP to throw a lure bomb, HOLD to aim it (a dashed arc) and release
+//     to throw (see Powers); while aiming, the ARROW keys steer the throw.
+//     1 is read as a key going down / up, not as a typed character.
+//     2 uses the freeze power. No word contains those two keys, and arrow
+//     keys type nothing, so they never clash with typing.
 //   - Backspace drops the current target so the player can retarget.
 //   - Escape pauses the game (and resumes it from the pause panel, see
 //     GameManager.OnPauseKey). Keys typed while paused are ignored.
-//   - Enter starts the game from the Start panel, and restarts it from the
-//     "You survived" / "You died" panels.
+//   - Enter closes a first-time power tip box, starts the game from the Start
+//     panel, and restarts it from the "You survived" / "You died" panels.
 //
 // INPUT BACKEND: this project uses Unity's Input System package
 // (Project Settings > Player > Active Input Handling), so typed characters come
 // from Keyboard.current.onTextInput. If that setting is ever switched to the old
 // Input Manager, the #else branches below use Input.inputString instead.
 // ---------------------------------------------------------------------------
+using System.Collections.Generic;
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -46,13 +58,21 @@ public class TypingController : MonoBehaviour
     private const char LureKey = '1';
     private const char FreezeKey = '2';
 
-    // The target whose word is currently being typed (null = no target).
-    private ITypingTarget target;
+    // CANDIDATES: every target whose word matches everything typed so far.
+    // Usually one (first letters on screen are kept different), but word
+    // families share a start on purpose: with "hunt" and "hunter" on screen,
+    // "h-u-n-t" matches both. Each key keeps the candidates it matches; a word
+    // that is finished is shot while the longer ones stay candidates, so going
+    // on to "hunter" kills both: a WORD CHAIN.
+    private readonly List<ITypingTarget> candidates = new List<ITypingTarget>();
+    private readonly List<ITypingTarget> scratch = new List<ITypingTarget>();
+    private int wordsFinished; // words finished in this run of typing (2+ = a word chain)
 
-    // The target being typed right now (null = none). The camera turns toward it.
+    // The target being typed right now: the nearest candidate (null = none).
+    // The camera turns toward it; the in-between shots go to it.
     public ITypingTarget CurrentTarget
     {
-        get { return target; }
+        get { return NearestCandidate(); }
     }
 
 #if ENABLE_INPUT_SYSTEM
@@ -83,6 +103,9 @@ public class TypingController : MonoBehaviour
         bool enterPressed;
         bool dropPressed;  // Backspace
         bool pausePressed; // Escape
+        bool lureDown;     // 1 went down this frame (start aiming)...
+        bool lureUp;       // ...and came up (throw)
+        Vector2 arrows;    // arrow keys held: x = Right - Left, y = Up - Down (steer the lure bomb)
 
 #if ENABLE_INPUT_SYSTEM
         // Keyboard.current can be missing on the very first frames, or change if a
@@ -105,11 +128,24 @@ public class TypingController : MonoBehaviour
         enterPressed = keyboard != null && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
         dropPressed = keyboard != null && keyboard.backspaceKey.wasPressedThisFrame;
         pausePressed = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
+        lureDown = keyboard != null && (keyboard.digit1Key.wasPressedThisFrame || keyboard.numpad1Key.wasPressedThisFrame);
+        lureUp = keyboard != null && (keyboard.digit1Key.wasReleasedThisFrame || keyboard.numpad1Key.wasReleasedThisFrame);
+        arrows = Vector2.zero;
+        if (keyboard != null)
+        {
+            arrows.x = (keyboard.rightArrowKey.isPressed ? 1f : 0f) - (keyboard.leftArrowKey.isPressed ? 1f : 0f);
+            arrows.y = (keyboard.upArrowKey.isPressed ? 1f : 0f) - (keyboard.downArrowKey.isPressed ? 1f : 0f);
+        }
 #else
         typedText = Input.inputString;
         enterPressed = Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
         dropPressed = Input.GetKeyDown(KeyCode.Backspace);
         pausePressed = Input.GetKeyDown(KeyCode.Escape);
+        lureDown = Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1);
+        lureUp = Input.GetKeyUp(KeyCode.Alpha1) || Input.GetKeyUp(KeyCode.Keypad1);
+        arrows = new Vector2(
+            (Input.GetKey(KeyCode.RightArrow) ? 1f : 0f) - (Input.GetKey(KeyCode.LeftArrow) ? 1f : 0f),
+            (Input.GetKey(KeyCode.UpArrow) ? 1f : 0f) - (Input.GetKey(KeyCode.DownArrow) ? 1f : 0f));
 #endif
 
         // ---- 2. Escape: pause / resume ----
@@ -128,17 +164,36 @@ public class TypingController : MonoBehaviour
             return;
         }
 
-        // ---- 4. Forget a target that is gone (it reached the player, got blown up...) ----
-        if (target != null && !target.IsAlive)
+        // ---- 4. Forget candidates that are gone (reached the player, got blown up...) ----
+        if (candidates.Count > 0)
         {
-            target = null;
+            candidates.RemoveAll(candidate => !candidate.IsAlive);
+            if (candidates.Count == 0)
+            {
+                EndRun();
+            }
         }
 
-        // ---- 5. Backspace: drop the target ----
-        if (dropPressed && target != null)
+        // ---- 5. Backspace: drop the word being typed ----
+        if (dropPressed && candidates.Count > 0)
         {
-            target.ResetProgress();
-            target = null;
+            foreach (ITypingTarget candidate in candidates)
+            {
+                candidate.ResetProgress();
+            }
+            candidates.Clear();
+            EndRun();
+        }
+
+        // ---- 5b. 1: aim the lure bomb while held (arrow keys steer it), throw on release ----
+        GameManager.Instance.Powers.SetAimInput(arrows);
+        if (lureDown)
+        {
+            GameManager.Instance.Powers.BeginLureAim();
+        }
+        if (lureUp)
+        {
+            GameManager.Instance.Powers.ReleaseLureAim();
         }
 
         // ---- 6. Handle every character typed this frame ----
@@ -149,10 +204,10 @@ public class TypingController : MonoBehaviour
                 continue; // Enter, Backspace, space, ...: never part of a word
             }
 
-            // The power keys.
+            // The power keys. 1 is handled above as a key held down; its typed
+            // character (repeated while the key is held) is skipped here.
             if (character == LureKey)
             {
-                GameManager.Instance.Powers.TryUseLure();
                 continue;
             }
             if (character == FreezeKey)
@@ -172,15 +227,43 @@ public class TypingController : MonoBehaviour
             HandleCharacter(character);
         }
 
-        // ---- 7. Show the current target's word at the bottom of the screen ----
-        if (target != null)
+        // ---- 7. Show the word being typed at the bottom of the screen ----
+        hud.SetTargetWord(CandidatesText());
+    }
+
+    // The bottom word box. One candidate: its word. Several (a word family):
+    // all of them side by side, shortest first, each with the typed part in
+    // yellow, e.g. "hunt   hunter". So the box always shows exactly what the
+    // keys are hitting, never one word while another one is being shot.
+    private string CandidatesText()
+    {
+        if (candidates.Count == 0)
         {
-            hud.SetTargetWord(target.ColoredWord);
+            return "";
         }
-        else
+        if (candidates.Count == 1)
         {
-            hud.SetTargetWord("");
+            return candidates[0].ColoredWord;
         }
+
+        scratch.Clear();
+        scratch.AddRange(candidates);
+        scratch.Sort((a, b) => a.Word.Length.CompareTo(b.Word.Length));
+        const int MaxShown = 3;
+        System.Text.StringBuilder text = new System.Text.StringBuilder();
+        for (int i = 0; i < scratch.Count && i < MaxShown; i++)
+        {
+            if (i > 0)
+            {
+                text.Append("   ");
+            }
+            text.Append(scratch[i].ColoredWord);
+        }
+        if (scratch.Count > MaxShown)
+        {
+            text.Append("   ...");
+        }
+        return text.ToString();
     }
 
     // Does the typed character match the expected one? Case-sensitive targets
@@ -198,9 +281,16 @@ public class TypingController : MonoBehaviour
     // target is case-sensitive, or (no target yet) some case-sensitive target exists.
     private bool SymbolsMatter()
     {
-        if (target != null)
+        if (candidates.Count > 0)
         {
-            return target.IsCaseSensitive;
+            foreach (ITypingTarget candidate in candidates)
+            {
+                if (candidate.IsCaseSensitive)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
         foreach (ITypingTarget candidate in spawner.GetTypingTargets())
         {
@@ -214,35 +304,96 @@ public class TypingController : MonoBehaviour
 
     private void HandleCharacter(char typed)
     {
-        // No target yet: this character has to select one.
-        if (target == null)
+        // Nothing being typed yet: this character picks every target whose word
+        // starts with it (usually exactly one), and counts as their first character.
+        if (candidates.Count == 0)
         {
-            target = FindNearestTargetStartingWith(typed);
-            if (target == null)
+            FindTargetsStartingWith(typed, candidates);
+            if (candidates.Count == 0)
             {
                 WrongKey();
                 return;
             }
-            // Carry on below: the selecting character also counts as the word's first character.
+            wordsFinished = 0;
         }
 
-        if (Matches(target, typed, target.NextLetter))
+        // Keep only the candidates whose next character is this one.
+        scratch.Clear();
+        foreach (ITypingTarget candidate in candidates)
         {
-            target.AdvanceProgress();
-            GameManager.Instance.OnCorrectKey();
-
-            // Every correct letter is a shot; the last one is the killing shot.
-            bool finalShot = target.IsWordComplete;
-            Bullet.Fire(target, finalShot);
-            if (finalShot)
+            if (Matches(candidate, typed, candidate.NextLetter))
             {
-                target = null;
+                scratch.Add(candidate);
             }
         }
-        else
+        if (scratch.Count == 0)
         {
-            WrongKey();
+            WrongKey(); // matches none of them: nothing changes, the combo resets
+            return;
         }
+
+        // Candidates that do not match drop out (their typed letters go back to white).
+        foreach (ITypingTarget candidate in candidates)
+        {
+            if (!scratch.Contains(candidate))
+            {
+                candidate.ResetProgress();
+            }
+        }
+        candidates.Clear();
+        candidates.AddRange(scratch);
+
+        foreach (ITypingTarget candidate in candidates)
+        {
+            candidate.AdvanceProgress();
+        }
+        GameManager.Instance.OnCorrectKey();
+
+        // Every word finished by this key gets its killing shot (with "hunt" and
+        // "hunter", the T finishes "hunt" and "hunter" stays a candidate).
+        bool anyFinished = false;
+        ITypingTarget lastFinished = null;
+        foreach (ITypingTarget candidate in candidates)
+        {
+            if (candidate.IsWordComplete)
+            {
+                Bullet.Fire(candidate, true);
+                wordsFinished += 1;
+                anyFinished = true;
+                lastFinished = candidate;
+            }
+        }
+        candidates.RemoveAll(candidate => candidate.IsWordComplete);
+
+        // A word was finished but a longer one goes on: the chain is running.
+        // Say so right where it happened, so the player keeps typing.
+        if (lastFinished != null && candidates.Count > 0)
+        {
+            hud.ShowFloatingText(lastFinished.LabelAnchor, "CHAIN!  keep typing", Palette.WordChain);
+        }
+
+        // Otherwise a normal shot at the nearest candidate (it staggers).
+        ITypingTarget nearest = NearestCandidate();
+        if (!anyFinished && nearest != null)
+        {
+            Bullet.Fire(nearest, false);
+        }
+
+        if (candidates.Count == 0)
+        {
+            EndRun();
+        }
+    }
+
+    // A run of typing is over (every candidate finished, dropped or gone). If
+    // it finished 2 or more words (hunt, then hunter), it was a WORD CHAIN.
+    private void EndRun()
+    {
+        if (wordsFinished >= 2)
+        {
+            GameManager.Instance.AddWordChain(wordsFinished);
+        }
+        wordsFinished = 0;
     }
 
     private void WrongKey()
@@ -252,13 +403,10 @@ public class TypingController : MonoBehaviour
         hud.FlashRed();
     }
 
-    // Returns the alive target closest to the player whose word starts with the
-    // typed character, or null if there is none.
-    private ITypingTarget FindNearestTargetStartingWith(char typed)
+    // Fills 'found' with every alive target whose word starts with the typed character.
+    private void FindTargetsStartingWith(char typed, List<ITypingTarget> found)
     {
-        ITypingTarget nearest = null;
-        float nearestDistance = float.MaxValue;
-
+        found.Clear();
         foreach (ITypingTarget candidate in spawner.GetTypingTargets())
         {
             // Skip a target whose word is already done: a bullet is on its way to it.
@@ -266,7 +414,21 @@ public class TypingController : MonoBehaviour
             {
                 continue;
             }
+            found.Add(candidate);
+        }
+    }
 
+    // The candidate closest to the player, or null if there is none.
+    private ITypingTarget NearestCandidate()
+    {
+        ITypingTarget nearest = null;
+        float nearestDistance = float.MaxValue;
+        foreach (ITypingTarget candidate in candidates)
+        {
+            if (!candidate.IsAlive)
+            {
+                continue;
+            }
             float distance = Vector3.Distance(player.position, candidate.Position);
             if (distance < nearestDistance)
             {
@@ -274,7 +436,6 @@ public class TypingController : MonoBehaviour
                 nearestDistance = distance;
             }
         }
-
         return nearest;
     }
 }

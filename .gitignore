@@ -14,8 +14,12 @@
 # See: https://github.com/github/gitignore/tree/main/Global
 #
 
+# Kept on this computer only (never committed): notes, local editor tools, screenshots
 /Docs
 /Assets/Editor/
+/Assets/Editor.meta
+/Assets/_Shots/
+/Assets/_Shots.meta
 README.md
 .utmp/
 /[Ll]ibrary/

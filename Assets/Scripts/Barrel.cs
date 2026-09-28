@@ -10,7 +10,8 @@
 // boss hurts it (BossDamage).
 //
 // How it is used:
-//   Level:       Barrel.Create(position, areaRoot) builds it (not typeable yet).
+//   Scene:       the Barrel prefab (Assets/Prefabs/Barrel), placed under a fight
+//                (an Encounter): it belongs to that fight.
 //   WaveSpawner: barrel.Activate(word, hud) when the player arrives in its area,
 //                barrel.Deactivate() when the player leaves.
 //   Bullet:      CompleteWord() when the player's last shot hits it.
@@ -27,30 +28,13 @@ public class Barrel : MonoBehaviour, ITypingTarget
     public const float BlastRadius = 4f;
     public const float BossDamage = 150f;  // damage to the boss if it stands in the blast
 
-    private const float Height = 1f;       // metres
-    private const float Width = 0.6f;
+    private const float Height = 1f;       // metres (the prefab's cylinder is this tall)
     private const float LabelAboveTop = 0.35f;
 
+    [SerializeField] private GameObject cylinder; // the red cylinder (it keeps its collider, so thrown bodies bounce off it)
+
     private bool isActive;                 // true between Activate and Deactivate
-    private GameObject cylinder;
     private BlastRing ring;
-
-    // Builds a barrel standing on the ground at position (world), under parent.
-    // It is not typeable until Activate.
-    public static Barrel Create(Vector3 position, Transform parent)
-    {
-        GameObject barrelObject = new GameObject("Barrel");
-        barrelObject.transform.SetParent(parent, false);
-        barrelObject.transform.position = position;
-        Barrel barrel = barrelObject.AddComponent<Barrel>();
-
-        // A Unity cylinder is 2 m tall at scale 1, centred on its middle.
-        // It keeps its collider, so thrown bodies bounce off it.
-        barrel.cylinder = Shapes.Block(PrimitiveType.Cylinder, "Cylinder", barrelObject.transform,
-            new Vector3(0f, Height * 0.5f, 0f), new Vector3(Width, Height * 0.5f, Width),
-            Palette.Lit(Palette.BarrelRed), true);
-        return barrel;
-    }
 
     // True once it has exploded.
     public bool IsExploded { get; private set; }

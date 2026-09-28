@@ -17,7 +17,7 @@
 //     top of the 3D scene, so an enemy's body can never hide another's word.
 //     WaveSpawner.LayoutLabels moves them to their enemies every frame.
 //   - the Start, "You survived" and "You died" panels (with the run's stats
-//     and a grade at the end), the pause panel and the 3-2-1 resume countdown
+//     at the end), the pause panel and the 3-2-1 resume countdown
 //
 // The HUD never decides anything. Other scripts call these methods when a value
 // changes (for example GameManager calls SetScore after a kill).
@@ -130,7 +130,6 @@ public class HUD : MonoBehaviour
         UpdateComboRewardBar();
         UpdateHint();
         UpdateQuizPop();
-        UpdateGradeReveal();
     }
 
     private void LateUpdate()
@@ -315,7 +314,6 @@ public class HUD : MonoBehaviour
     {
         HideAllPanels();
         SetTargetWord(""); // typing is over, so clear the word at the bottom
-        ClearResults(wonScoreText, wonGrade);
         wonScoreText.text = "Final score: " + finalScore;
         wonPanel.SetActive(true);
     }
@@ -324,7 +322,6 @@ public class HUD : MonoBehaviour
     {
         HideAllPanels();
         SetTargetWord("");
-        ClearResults(lostScoreText, lostGrade);
         lostScoreText.text = "Final score: " + finalScore;
         lostPanel.SetActive(true);
     }
@@ -1621,24 +1618,12 @@ public class HUD : MonoBehaviour
         quizTimerFill.offsetMax = Vector2.zero;
     }
 
-    // ---- End of game: stats and grade ----
+    // ---- End of game: stats ----
 
-    private const float StatsRightMargin = 480f;   // the stats text leaves this much room on its right for the grade
-    private const float GradeX = 470f;             // the grade letter's centre, right of the panel's centre
-    private const float GradeY = 10f;
-    private const float GradeRevealDelay = 0.35f;  // the grade appears a moment after the panel...
-    private const float GradeRevealSeconds = 0.25f; // ...slamming down like a stamp
-    private const float GradeRevealScale = 2.4f;
     private const string StatLabel = "<color=#9AA3AE>";  // grey labels, white numbers
 
-    private TMP_Text wonGrade;          // the big grade letter of each panel, created on its first results
-    private TMP_Text lostGrade;
-    private TMP_Text revealingGrade;    // the grade being stamped in, or null
-    private CanvasGroup revealingGradeGroup;
-    private float gradeRevealAge;
-
-    // Shows the "You survived" (won) or "You died" panel with the run's stats
-    // and grade, using the existing panels and their Restart buttons.
+    // Shows the "You survived" (won) or "You died" panel with the run's stats,
+    // using the existing panels and their Restart buttons.
     public void ShowResults(bool won, RunStats stats)
     {
         if (stats == null)
@@ -1653,42 +1638,19 @@ public class HUD : MonoBehaviour
         }
 
         TMP_Text message;
-        TMP_Text grade;
         if (won)
         {
             ShowWonPanel(stats.Score);
             message = wonScoreText;
-            if (wonGrade == null)
-            {
-                wonGrade = CreateGrade(wonPanel.transform);
-            }
-            grade = wonGrade;
         }
         else
         {
             ShowLostPanel(stats.Score);
             message = lostScoreText;
-            if (lostGrade == null)
-            {
-                lostGrade = CreateGrade(lostPanel.transform);
-            }
-            grade = lostGrade;
         }
 
-        // The stats replace "Final score: ...". The right margin moves them to the
-        // left half of the text box; the grade letter stands on the right.
+        // The stats replace "Final score: ...".
         message.text = StatsText(stats);
-        message.margin = new Vector4(0f, 0f, StatsRightMargin, 0f);
-
-        string letter = stats.Grade;
-        grade.text = letter;
-        grade.color = GradeColor(letter);
-        grade.gameObject.SetActive(true);
-
-        revealingGrade = grade;
-        revealingGradeGroup = grade.GetComponent<CanvasGroup>();
-        gradeRevealAge = 0f;
-        ApplyGradeReveal();
     }
 
     // Four lines, e.g.
@@ -1710,78 +1672,6 @@ public class HUD : MonoBehaviour
             + StatLabel + "Best combo</color>  <b>x" + stats.BestCombo + "</b>     "
             + StatLabel + "Biggest blast</color>  <b>x" + stats.BiggestMultiKill + "</b>\n"
             + StatLabel + "Time</color>  <b>" + time + "</b>";
-    }
-
-    // S gold, A green, B cyan, C orange, D red.
-    private static Color GradeColor(string grade)
-    {
-        switch (grade)
-        {
-            case "S":
-                return new Color(1f, 0.82f, 0.2f);
-            case "A":
-                return new Color(0.35f, 0.9f, 0.4f);
-            case "B":
-                return new Color(0.3f, 0.82f, 1f);
-            case "C":
-                return new Color(1f, 0.58f, 0.18f);
-            default:
-                return new Color(1f, 0.25f, 0.2f);
-        }
-    }
-
-    // Grade (huge letter) > Caption ("GRADE", above the letter), on the right of a panel.
-    private TMP_Text CreateGrade(Transform panel)
-    {
-        TMP_Text grade = CreateText(panel, "Grade", "", 230f, new Vector2(GradeX, GradeY));
-        grade.rectTransform.sizeDelta = new Vector2(320f, 280f);
-        grade.fontStyle = FontStyles.Bold;
-        grade.textWrappingMode = TextWrappingModes.NoWrap;
-        grade.gameObject.AddComponent<CanvasGroup>(); // fades the letter and its caption together
-
-        TMP_Text caption = CreateText(grade.rectTransform, "Caption", "GRADE", 32f, new Vector2(0f, 150f));
-        caption.rectTransform.sizeDelta = new Vector2(320f, 44f);
-        caption.characterSpacing = 12f;
-        caption.color = new Color(0.75f, 0.78f, 0.84f);
-        return grade;
-    }
-
-    // Puts a panel's message text back to how the scene made it (ShowWonPanel /
-    // ShowLostPanel without stats) and hides the grade.
-    private void ClearResults(TMP_Text message, TMP_Text grade)
-    {
-        message.margin = Vector4.zero;
-        if (grade != null)
-        {
-            grade.gameObject.SetActive(false);
-            if (revealingGrade == grade)
-            {
-                revealingGrade = null;
-            }
-        }
-    }
-
-    private void UpdateGradeReveal()
-    {
-        if (revealingGrade == null)
-        {
-            return;
-        }
-        gradeRevealAge += Time.unscaledDeltaTime; // real time, in case the game time is stopped
-        ApplyGradeReveal();
-    }
-
-    private void ApplyGradeReveal()
-    {
-        // stamp: 0 before the delay, then 0 -> 1. Squared, so it speeds up and "lands".
-        float stamp = Mathf.Clamp01((gradeRevealAge - GradeRevealDelay) / GradeRevealSeconds);
-        float scale = Mathf.Lerp(GradeRevealScale, 1f, stamp * stamp);
-        revealingGrade.rectTransform.localScale = new Vector3(scale, scale, 1f);
-        revealingGradeGroup.alpha = stamp;
-        if (stamp >= 1f)
-        {
-            revealingGrade = null; // done
-        }
     }
 
     // ---- Small UI helpers ----

@@ -41,12 +41,6 @@ public class RailMover : MonoBehaviour
         get { return !riding && Vector3.Angle(transform.forward, finalFacing) < 1f; }
     }
 
-    // The flat direction the player's body faces.
-    public Vector3 Facing
-    {
-        get { return transform.forward; }
-    }
-
     // Puts the player somewhere right away (the start of the level).
     public void PlaceAt(Vector3 position, Vector3 facing)
     {

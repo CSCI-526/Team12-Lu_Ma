@@ -9,7 +9,9 @@
 // Grabbing one costs time while zombies keep walking: a small gamble.
 //
 // How it is used:
-//   Level:       SupplyCrate.Create(position, SupplyKind.Freeze, areaRoot)
+//   Scene:       a crate prefab (Assets/Prefabs: SupplyCrate is the health
+//                crate, LureCrate and FreezeCrate are variants of it), placed
+//                under a fight (an Encounter): it belongs to that fight.
 //   WaveSpawner: crate.Activate(word, hud) when the player arrives in its area,
 //                crate.Deactivate() when the player leaves.
 //   Bullet:      CompleteWord() when the player's last shot hits it.
@@ -32,38 +34,19 @@ public class SupplyCrate : MonoBehaviour, ITypingTarget
 {
     public const int HealAmount = 30;
 
-    private const float Size = 0.8f;            // metres
+    private const float Size = 0.8f;            // metres (the prefab's cube is this big)
     private const float LabelAboveTop = 0.35f;
+
+    [SerializeField] private SupplyKind kind = SupplyKind.Health; // what is inside (the cube's colour shows it)
+    [SerializeField] private GameObject cube;                      // the coloured cube (it keeps its collider)
 
     private bool isActive;                      // true between Activate and Deactivate
     private HUD hud;
-    private GameObject cube;
 
-    // Builds a crate of this kind standing on the ground at position (world),
-    // under parent. It is not typeable until Activate.
-    public static SupplyCrate Create(Vector3 position, SupplyKind kind, Transform parent)
+    public SupplyKind Kind
     {
-        GameObject crateObject = new GameObject("SupplyCrate");
-        crateObject.transform.SetParent(parent, false);
-        crateObject.transform.position = position;
-        SupplyCrate crate = crateObject.AddComponent<SupplyCrate>();
-        crate.Kind = kind;
-
-        Color color = Palette.HealthCrate;
-        if (kind == SupplyKind.Lure)
-        {
-            color = Palette.LureCrate;
-        }
-        else if (kind == SupplyKind.Freeze)
-        {
-            color = Palette.FreezeCrate;
-        }
-        crate.cube = Shapes.Block(PrimitiveType.Cube, "Cube", crateObject.transform,
-            new Vector3(0f, Size * 0.5f, 0f), Vector3.one * Size, Palette.Lit(color), true);
-        return crate;
+        get { return kind; }
     }
-
-    public SupplyKind Kind { get; private set; }
 
     // True once it has been opened.
     public bool IsOpened { get; private set; }

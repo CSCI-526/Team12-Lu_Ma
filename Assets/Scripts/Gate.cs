@@ -1,44 +1,26 @@
 // Gate.cs
 // ---------------------------------------------------------------------------
-// A gate between two areas: a plain box that blocks the way until the area is
-// cleared. Then WaveSpawner calls Open() and it sinks into the floor, and the
-// player rides over it. Level.cs builds each gate with:
+// A gate between two fights: a plain box that blocks the way until the fight
+// is won. Then WaveSpawner calls Open() and it sinks into the floor, and the
+// player runs over it.
 //
-//   Gate.Create(parent, position, rideDirection, width, height);
-//
-//   position = bottom centre of the opening (on the ground).
+// It is a prefab (Assets/Prefabs/Gate): place it on the ground across the
+// way, with its blue arrow (forward) pointing along the run. To make it wider,
+// change the X scale of its Panel. To make it taller, set the Panel's Y scale
+// to the height and its Y position to half of that (change the Panel, not the
+// Gate itself).
+// Drag it into the fight's Exit Gate field.
 // ---------------------------------------------------------------------------
 using System.Collections;
 using UnityEngine;
 
 public class Gate : MonoBehaviour
 {
-    private const float Thickness = 0.3f;     // metres
-    private const float OpenSeconds = 1.5f;   // time to sink all the way down
+    private const float OpenSeconds = 1.5f;    // time to sink all the way down
+
+    [SerializeField] private Transform panel;  // the box (it keeps its collider while closed: thrown bodies bounce off it, a lure bomb throw stops short of it)
 
     public bool IsOpen { get; private set; }
-
-    private Transform panel;
-    private float height;
-
-    // Builds a closed gate. See the comment at the top of the file.
-    public static Gate Create(Transform parent, Vector3 position, Vector3 rideDirection, float width, float height)
-    {
-        GameObject root = new GameObject("Gate");
-        root.transform.SetParent(parent, false);
-        root.transform.position = position;
-
-        // The gate's own space: x = across the opening, z = the ride direction.
-        Vector3 flat = new Vector3(rideDirection.x, 0f, rideDirection.z);
-        root.transform.rotation = Quaternion.LookRotation(flat.sqrMagnitude > 0.001f ? flat.normalized : Vector3.forward);
-
-        Gate gate = root.AddComponent<Gate>();
-        gate.height = height;
-        // Keeps its collider while closed, so thrown bodies bounce off it.
-        gate.panel = Shapes.Block(PrimitiveType.Cube, "Panel", root.transform, new Vector3(0f, height * 0.5f, 0f),
-            new Vector3(width, height, Thickness), Palette.Lit(Palette.Gate), true).transform;
-        return gate;
-    }
 
     // Sinks the gate into the floor. Does nothing if it is already open.
     public void Open()
@@ -54,6 +36,7 @@ public class Gate : MonoBehaviour
 
     private IEnumerator Sink()
     {
+        float height = panel.localScale.y;
         Vector3 closed = panel.localPosition;
         Vector3 open = closed + Vector3.down * (height + 0.1f); // fully below the floor
         for (float time = 0f; time < OpenSeconds; time += Time.deltaTime)

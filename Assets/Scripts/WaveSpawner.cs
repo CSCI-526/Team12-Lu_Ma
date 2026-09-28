@@ -146,7 +146,7 @@ public class WaveSpawner : MonoBehaviour
     }
 
     // Awake (not Start): after a Restart, GameManager.Start begins the waves at once,
-    // and that may happen before this object's Start. Level builds its map in its
+    // and that may happen before this object's Start. Level lists its fights in its
     // own Awake, which runs before this one (see Level's DefaultExecutionOrder).
     private void Awake()
     {
@@ -444,12 +444,17 @@ public class WaveSpawner : MonoBehaviour
         // 2. Zombies come out in packs of GroupSize, from the spawn points in turn
         //    (a shuffled order, so it is not the same door every time).
         List<SpawnPoint> order = new List<SpawnPoint>(encounter.SpawnPoints);
+        if (order.Count == 0)
+        {
+            Debug.LogError("WaveSpawner: the fight \"" + encounter.name + "\" has no spawn points under it.");
+            yield break;
+        }
         Shuffle(order);
         int spawned = 0;
         int next = 0;
         while (spawned < zombiesThisWave)
         {
-            SpawnPoint point = order.Count > 0 ? order[next % order.Count] : FallbackSpawnPoint();
+            SpawnPoint point = order[next % order.Count];
             next += 1;
 
             int pack = Mathf.Min(Mathf.Max(1, encounter.GroupSize), zombiesThisWave - spawned);
@@ -633,19 +638,25 @@ public class WaveSpawner : MonoBehaviour
         Vector3 towardPlayer = player.position - at;
         towardPlayer.y = 0f;
         Vector3 exit = at + towardPlayer.normalized * 1.5f;
-        SpawnPoint point = new SpawnPoint(at, exit, null, 0.3f);
-        return SpawnZombie(point, kind, zombieSpeed + zombieSpeedPerWave * 2f);
+        return SpawnZombieAt(at, exit, 0.3f, kind, zombieSpeed + zombieSpeedPerWave * 2f);
     }
 
     // Spawns one zombie at the spawn point. forcedWord: its word (a WORD CHAIN
     // pair's); null = pick a word whose first letter is not on screen yet.
     private Zombie SpawnZombie(SpawnPoint point, ZombieKind kind, float speed, string forcedWord = null)
     {
+        return SpawnZombieAt(point.Position, point.Exit, point.Spread, kind, speed, forcedWord);
+    }
+
+    // The same, from any spot: the zombie appears at spawnAt (plus a random
+    // offset up to spread metres), walks to exitAt, then at the player.
+    private Zombie SpawnZombieAt(Vector3 spawnAt, Vector3 exitAt, float spread, ZombieKind kind, float speed, string forcedWord = null)
+    {
         // A small random offset so a pack does not stand in one spot.
-        Vector2 offset = Random.insideUnitCircle * point.Spread;
+        Vector2 offset = Random.insideUnitCircle * spread;
         Vector3 side = new Vector3(offset.x, 0f, offset.y);
-        Vector3 position = point.Position + side;
-        Vector3 exit = point.Exit + side * 0.5f;
+        Vector3 position = spawnAt + side;
+        Vector3 exit = exitAt + side * 0.5f;
 
         string word = forcedWord;
         if (word == null)
@@ -680,13 +691,6 @@ public class WaveSpawner : MonoBehaviour
             Tutorial.Once("armored", "ARMORED: the first word breaks its armor. Explosions kill it at once!", 6f);
         }
         return zombie;
-    }
-
-    // Only used if an encounter has no spawn points: somewhere ahead of the player.
-    private SpawnPoint FallbackSpawnPoint()
-    {
-        Vector3 ahead = player.position + rail.Facing * 30f;
-        return new SpawnPoint(ahead, ahead - rail.Facing * 2f, null, 5f);
     }
 
     private static void Shuffle(List<SpawnPoint> list)

@@ -409,7 +409,6 @@ public class GameManager : MonoBehaviour
         {
             Health = 0;
         }
-        Stats.DamageTaken += amount;
         hud.SetHealth(Health, startingHealth);
         hud.FlashRed();
         CameraDirector.Shake(0.45f);
@@ -443,7 +442,6 @@ public class GameManager : MonoBehaviour
         }
 
         Stats.Score = Score;
-        Stats.Won = won;
         hud.ShowResults(won, Stats);
     }
 }

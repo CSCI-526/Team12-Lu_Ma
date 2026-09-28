@@ -1,13 +1,13 @@
 # Builds the Unity WebGL player on every push to main and publishes it to the
-# bunfloof/Game-Jam-Build repository, which GitHub Pages serves at
-# https://bunfloof.github.io/Game-Jam-Build/
+# bunfloof/The-Typeblaster-of-the-Dead-Web-Build repository, which GitHub Pages
+# serves at https://bunfloof.github.io/The-Typeblaster-of-the-Dead-Web-Build/
 #
 # Secrets this workflow needs (Settings > Secrets and variables > Actions on THIS repo):
 #   UNITY_LICENSE       full contents of Unity_lic.ulf (Unity Personal license)
 #   UNITY_EMAIL         email of the Unity account that activated that license
 #   UNITY_PASSWORD      password of that Unity account
 #   ACTIONS_DEPLOY_KEY  private SSH key; its public half is a write-enabled
-#                       deploy key on bunfloof/Game-Jam-Build
+#                       deploy key on bunfloof/The-Typeblaster-of-the-Dead-Web-Build
 
 name: Build and deploy WebGL
 
@@ -63,11 +63,11 @@ jobs:
 
       # force_orphan keeps the build repo at a single commit so it does not grow
       # by ~60 MB of binaries on every deploy. Remove it to keep deploy history.
-      - name: Publish the build to Game-Jam-Build
+      - name: Publish the build to The-Typeblaster-of-the-Dead-Web-Build
         uses: peaceiris/actions-gh-pages@v4
         with:
           deploy_key: ${{ secrets.ACTIONS_DEPLOY_KEY }}
-          external_repository: bunfloof/Game-Jam-Build
+          external_repository: bunfloof/The-Typeblaster-of-the-Dead-Web-Build
           publish_branch: main
           publish_dir: build/WebGL/WebGL
           force_orphan: true

@@ -158,12 +158,6 @@ public class TypingController : MonoBehaviour
         }
 
         // ---- 3. Outside of play, only Enter does something ----
-        // (except on the leaderboard page, where the player types a name)
-        if (GameManager.Instance.State == GameState.Scores)
-        {
-            GameManager.Instance.OnLeaderboardInput(typedText, dropPressed, enterPressed);
-            return;
-        }
         if (GameManager.Instance.State != GameState.Playing)
         {
             if (enterPressed)

@@ -1897,7 +1897,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Some Typing Game Blast Radius
+  m_text: The Typeblaster of the Dead
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -13223,7 +13223,6 @@ MonoBehaviour:
   wonScoreText: {fileID: 2117397015}
   lostScoreText: {fileID: 1822205854}
   bossBarSize: {x: 700, y: 26}
-  bossBarTopMargin: 70
   bossBarColor: {r: 0.85, g: 0.1, b: 0.1, a: 1}
   wordFontSize: 40
   wordOutlineWidth: 0.25
@@ -15419,6 +15418,7 @@ MonoBehaviour:
   armoredFirstWave: 4
   armoredStartCount: 2
   armoredPerWave: 1
+  mapViewWaves: 0200000004000000
   chainFirstWave: 2
   chainStartCount: 1
   chainPerWave: 1
@@ -15433,6 +15433,9 @@ MonoBehaviour:
   labelGap: 4
   labelSlideSharpness: 14
   labelEdgeMargin: 110
+  labelTopMargin: 150
+  bossLabelTopMargin: 235
+  minWordFontSize: 34
 --- !u!4 &1239676765
 Transform:
   m_ObjectHideFlags: 0
@@ -17496,6 +17499,14 @@ MonoBehaviour:
   bobFadeSeconds: 0.5
   breathingDegrees: 0.25
   breathingFrequency: 0.25
+  viewSwitchSeconds: 1.6
+  mapPitch: 48
+  mapFieldOfView: 55
+  mapPlayerScreenHeight: 0.14
+  mapScreenMargin: 0.06
+  mapMinDistance: 12
+  mapMaxDistance: 120
+  mapZoomSmoothTime: 0.6
 --- !u!1 &1427034096
 GameObject:
   m_ObjectHideFlags: 0
@@ -25632,7 +25643,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Powers
   maxCharges: 3
-  killsPerReward: 5
+  frenzySeconds: 5
+  oneWeaponPerWave: 1
   throwDistance: 9
   minThrowDistance: 3
   maxThrowDistance: 22

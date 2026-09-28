@@ -30,9 +30,8 @@ public enum GameState
     Playing,  // riding, fighting, typing
     Paused,   // Esc was pressed: pause panel, or the 3-2-1 countdown before play resumes
     Tip,      // a first-time tip box is showing (game frozen); Enter or OK continues
-    Won,      // the last area was cleared, "You survived" panel is showing (Enter / Continue: leaderboard)
-    Lost,     // health reached 0, "You died" panel is showing
-    Scores    // the leaderboard page after Won / Lost: type a name, then Play again
+    Won,      // the last area was cleared, "You survived" panel is showing (Enter / Restart: back to the Start panel)
+    Lost      // health reached 0, "You died" panel is showing (Enter / Restart: back to the Start panel)
 }
 
 public class GameManager : MonoBehaviour
@@ -211,9 +210,9 @@ public class GameManager : MonoBehaviour
         powers.OnComboChanged(Combo);
     }
 
-    // Called by the pause panel's Restart and the leaderboard's Play again (and
-    // Enter there): reloads the scene, which shows the Start panel, the same
-    // screen as when the game is first opened.
+    // Called by the Restart buttons (pause panel and the end screens) and by
+    // Enter on the end screens: reloads the scene, which shows the Start panel,
+    // the same screen as when the game is first opened.
     public void RestartGame()
     {
         Time.timeScale = 1f; // in case we restart from the pause panel
@@ -230,7 +229,7 @@ public class GameManager : MonoBehaviour
         }
         else if (State == GameState.Won || State == GameState.Lost)
         {
-            OpenLeaderboard();
+            RestartGame();
         }
         else if (State == GameState.Tip)
         {
@@ -467,81 +466,6 @@ public class GameManager : MonoBehaviour
         }
 
         Stats.Score = Score;
-        gameWon = won;
         hud.ShowResults(won, Stats);
-    }
-
-    // ---- Leaderboard (after the results panel) ----
-    // Continue (or Enter) on the results panel opens the leaderboard page: the
-    // player types a name (Enter saves it with the score, see Leaderboard),
-    // sees their rank among the six best, then plays again.
-
-    private bool gameWon;
-    private string typedName = "";
-    private bool nameSaved;
-
-    // Called by the results panel's Continue button (HUD) and by Enter.
-    public void OpenLeaderboard()
-    {
-        if (State != GameState.Won && State != GameState.Lost)
-        {
-            return;
-        }
-        State = GameState.Scores;
-        typedName = "";
-        nameSaved = false;
-        hud.ShowLeaderboard(gameWon, Stats.Score); // the score frozen at the end (late blasts do not count)
-        hud.SetLeaderboardName(typedName);
-    }
-
-    // Called by TypingController every frame on the leaderboard page with what
-    // was typed. Before the name is saved: letters build the name, Backspace
-    // removes one, Enter saves it. After: Enter plays again.
-    public void OnLeaderboardInput(string typed, bool backspace, bool enter)
-    {
-        if (State != GameState.Scores)
-        {
-            return;
-        }
-        if (nameSaved)
-        {
-            if (enter)
-            {
-                RestartGame();
-            }
-            return;
-        }
-
-        foreach (char character in typed)
-        {
-            if (!char.IsControl(character) && typedName.Length < Leaderboard.MaxNameLength
-                && (typedName.Length > 0 || !char.IsWhiteSpace(character)))
-            {
-                typedName += character;
-            }
-        }
-        if (backspace && typedName.Length > 0)
-        {
-            typedName = typedName.Substring(0, typedName.Length - 1);
-        }
-        hud.SetLeaderboardName(typedName);
-
-        if (enter)
-        {
-            SubmitName();
-        }
-    }
-
-    // Saves the name with the score and shows the player's place.
-    public void SubmitName()
-    {
-        if (State != GameState.Scores || nameSaved)
-        {
-            return;
-        }
-        nameSaved = true;
-        string playerName = Leaderboard.CleanName(typedName);
-        int rank = Leaderboard.Add(playerName, Stats.Score);
-        hud.ShowLeaderboardRank(rank, playerName, Stats.Score);
     }
 }

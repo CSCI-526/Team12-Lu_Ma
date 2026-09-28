@@ -22,7 +22,7 @@ using UnityEngine;
 public static class Palette
 {
     // ---- The level ----
-    public static readonly Color Rail = new Color(0.62f, 0.68f, 0.78f);   // the two rails along the run
+    public static readonly Color RouteGuide = new Color(0.86f, 0.80f, 0.62f); // the faint arrows painted along the run (Level)
 
     // ---- Zombies (colour coded) ----
     public static readonly Color ZombieGrey = new Color(0.80f, 0.82f, 0.85f);
@@ -44,6 +44,8 @@ public static class Palette
     public static readonly Color WordQuiz = new Color(0.40f, 0.90f, 1.00f);
     public static readonly Color WordArmor = new Color(0.75f, 0.80f, 0.90f);
     public static readonly Color WordChain = new Color(0.82f, 0.52f, 1.00f); // purple: a WORD CHAIN pair (hunt / hunter) and its link line
+    public static readonly Color WordFrenzy = new Color(1.00f, 0.25f, 0.35f); // vivid red: the short words during a FRENZY
+    public static readonly Color WeaponFrenzy = new Color(1.00f, 0.30f, 0.20f); // the FRENZY weapon: its HUD slot, skull icon and status line
 
     private static readonly Dictionary<Color, Material> litMaterials = new Dictionary<Color, Material>();
     private static readonly Dictionary<Color, Material> unlitMaterials = new Dictionary<Color, Material>();

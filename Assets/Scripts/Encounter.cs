@@ -61,6 +61,12 @@ public class Encounter : MonoBehaviour
         }
     }
 
+    // Where the player stands while fighting here.
+    public Vector3 StopPosition
+    {
+        get { return stop != null ? stop.position : transform.position; }
+    }
+
     // The direction the player faces while fighting here (flat on the ground).
     public Vector3 Facing
     {

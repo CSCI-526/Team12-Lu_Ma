@@ -21,6 +21,9 @@
 // DAMAGE counts, not words: the boss dies as soon as its health reaches 0,
 // however many words are left. Explosions hurt it too (TakeBlastDamage):
 // barrels, lure bombs, and the RED zombies it summons, blown up next to it.
+// The combo weapons hurt it less: words typed during a FRENZY deal only
+// FrenzyWordDamageScale of their damage, and the RPG's blast is weaker on the
+// boss (Bullet.RocketBossDamage).
 //
 // ATTACKS - one every attackInterval seconds (angryAttackInterval below half
 // health). Each has a wind-up of attackWarningSeconds, while the body turns
@@ -51,6 +54,9 @@ public class Boss : MonoBehaviour
     [SerializeField] private float headDamage = 70f;            // each word typed on the head
     [SerializeField] private float limbWordDamage = 50f;        // each word typed on an arm or a leg
     [SerializeField] private float limbSeverDamage = 60f;       // extra when a limb falls off
+    // During a FRENZY the boss's words are tiny and fast to type, so each one
+    // hurts it less (a constant: the scene keeps Inspector values it saved).
+    private const float FrenzyWordDamageScale = 0.4f;
     [SerializeField] private float regrowSeconds = 1.5f;        // pause before the limbs grow back
 
     [Header("Quiz")]
@@ -236,6 +242,40 @@ public class Boss : MonoBehaviour
         }
         string word = slot.Limb.IsHead ? WordBank.PickBossWord(used) : WordBank.PickWord(used, ZombieKind.Explosive);
         slot.SetWord(word);
+
+        // During a FRENZY a new word (the head's next one, a limb growing back)
+        // is short too; its real word comes back when the frenzy ends.
+        if (Powers.IsFrenzy)
+        {
+            used.Add(char.ToUpperInvariant(word[0]));
+            slot.EnterFrenzy(WordBank.PickFrenzyWord(used));
+        }
+    }
+
+    // ---- FRENZY (a combo weapon, see Powers) ----
+
+    // Every word on the body becomes a short word (first letters not in
+    // 'used', which grows as they are picked).
+    public void EnterFrenzy(List<char> used)
+    {
+        foreach (BossPart slot in words)
+        {
+            if (slot.IsAlive)
+            {
+                string shortWord = WordBank.PickFrenzyWord(used);
+                used.Add(char.ToUpperInvariant(shortWord[0]));
+                slot.EnterFrenzy(shortWord);
+            }
+        }
+    }
+
+    // Every word on the body gets its real word back.
+    public void ExitFrenzy()
+    {
+        foreach (BossPart slot in words)
+        {
+            slot.ExitFrenzy();
+        }
     }
 
     // Adds every word, energy orb and quiz answer that can still be typed to
@@ -620,11 +660,12 @@ public class Boss : MonoBehaviour
         BossLimb limb = slot.Limb;
         GameManager.Instance.AddKill();
         limb.HitFlash = 1f;
+        float scale = Powers.IsFrenzy ? FrenzyWordDamageScale : 1f;
 
         if (limb.IsHead)
         {
-            ShowDamage(slot.LabelAnchor, headDamage);
-            TakeHit(headDamage);
+            ShowDamage(slot.LabelAnchor, headDamage * scale);
+            TakeHit(headDamage * scale);
             if (IsAlive)
             {
                 GiveNewWord(slot); // the head never falls off: it just gets a new word
@@ -632,8 +673,8 @@ public class Boss : MonoBehaviour
             return;
         }
 
-        ShowDamage(slot.LabelAnchor, limbWordDamage);
-        TakeHit(limbWordDamage);
+        ShowDamage(slot.LabelAnchor, limbWordDamage * scale);
+        TakeHit(limbWordDamage * scale);
         if (!IsAlive)
         {
             return;
@@ -657,7 +698,7 @@ public class Boss : MonoBehaviour
         hud.ShowFloatingText(limb.Block.transform.position + Vector3.up, text, Color.yellow);
         CameraDirector.Shake(0.35f);
         StartCoroutine(FallOff(limb));
-        TakeHit(limbSeverDamage);
+        TakeHit(limbSeverDamage * (Powers.IsFrenzy ? FrenzyWordDamageScale : 1f));
         if (!IsAlive)
         {
             return;
@@ -1060,8 +1101,40 @@ public class BossPart : ITypingTarget
     public void SetWord(string word)
     {
         Word = word;
+        realWord = null; // a fresh word: not a frenzy word
+        Label.color = Color.white;
         TypedCount = 0;
         IsCleared = false;
+        RefreshLabel();
+    }
+
+    // FRENZY: a short word in a vivid colour for a while; ExitFrenzy gives the
+    // real word back (unless the word was typed meanwhile).
+    private string realWord;
+
+    public void EnterFrenzy(string shortWord)
+    {
+        if (IsCleared || realWord != null)
+        {
+            return;
+        }
+        realWord = Word;
+        Word = shortWord;
+        TypedCount = 0;
+        Label.color = Palette.WordFrenzy;
+        RefreshLabel();
+    }
+
+    public void ExitFrenzy()
+    {
+        if (realWord == null)
+        {
+            return;
+        }
+        Word = realWord;
+        realWord = null;
+        TypedCount = 0;
+        Label.color = Color.white;
         RefreshLabel();
     }
 

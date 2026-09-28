@@ -97,10 +97,10 @@ public static class WordBank
     // (TextMeshPro would read them as rich-text tags) or spaces.
     private static readonly string[] OrbWords =
     {
-        "Zap!", "Hex#", "B00m", "Fry!", "Rot?", "@Burn", "#Doom", "$Void", "Kr4ck", "Sp@rk",
-        "Fl4re", "V0lt", "!Hit", "&Fear", "*Ash", "%Rip", "Nuk3", "Sh0ck", "Ion+", "Jolt!",
-        "Qu@ke", "Wisp~", "Emb3r", "T0xic", "Omen!", "Pyr0", "Lava*", "Mana=", "Ray^", "EMP!",
-        "Xen0n", "yELL", "dOOm", "cRaCk", "gl0w", "uRGe", "HeX", "Z4p", "k!LL", "BuRn!"
+        "Zap!", "Hex#", "B00m", "Fry!", "Rot?", "@Burn", "#Doom", "$Void", "Kr@ck", "Sp@rk",
+        "Fl@re", "V0lt", "!Hit", "&Fear", "*Ash", "%Rip", "Nuk#", "Sh0ck", "Ion+", "Jolt!",
+        "Qu@ke", "Wisp~", "Emb#r", "T0xic", "Omen!", "Pyr0", "Lava*", "Mana=", "Ray^", "EMP!",
+        "Xen0n", "yELL", "dOOm", "cRaCk", "gl0w", "uRGe", "HeX", "Z@p", "k!LL", "BuRn!"
     };
     // (No orb word may contain '1' or '2': those keys throw a lure bomb / freeze, see Powers.)
 
@@ -298,6 +298,70 @@ public static class WordBank
             return null;
         }
         return pairs[Random.Range(0, pairs.Count)];
+    }
+
+    // FRENZY (combo weapon): a tiny word for an enemy while the frenzy lasts,
+    // 1 to 4 letters (the length is rolled at random, so it can be a SINGLE
+    // letter), with a first letter not in usedFirstLetters (UPPERCASE).
+    public static string PickFrenzyWord(List<char> usedFirstLetters)
+    {
+        // Try the rolled length first; if every first letter of that length is
+        // taken, try the other lengths.
+        int rolled = Random.Range(1, 5);
+        for (int step = 0; step < 4; step++)
+        {
+            int length = (rolled - 1 + step) % 4 + 1;
+            string word = PickWordWithUnusedFirstLetter(FrenzyBucket(length), usedFirstLetters);
+            if (word != null)
+            {
+                return word;
+            }
+        }
+        return ShortWords[Random.Range(0, ShortWords.Length)]; // every letter taken: a duplicate cannot be avoided
+    }
+
+    // Single letters and two-letter words for the frenzy (3 and 4 letters come from ShortWords).
+    private static readonly string[] FrenzyLetters =
+    {
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+    };
+
+    private static readonly string[] FrenzyTwoLetterWords =
+    {
+        "AH", "AX", "BE", "BY", "DO", "EH", "FX", "GO", "HI", "IF", "IN", "IT", "JO",
+        "KO", "LO", "ME", "MY", "NO", "OH", "OK", "ON", "OX", "PI", "QI", "RE", "SO",
+        "TO", "UP", "US", "VS", "WE", "XO", "YO", "ZZ"
+    };
+
+    private static readonly Dictionary<int, string[]> frenzyBuckets = new Dictionary<int, string[]>();
+
+    // The frenzy words of one length (1..4).
+    private static string[] FrenzyBucket(int length)
+    {
+        if (length == 1)
+        {
+            return FrenzyLetters;
+        }
+        if (length == 2)
+        {
+            return FrenzyTwoLetterWords;
+        }
+        string[] bucket;
+        if (!frenzyBuckets.TryGetValue(length, out bucket))
+        {
+            List<string> words = new List<string>();
+            foreach (string word in ShortWords)
+            {
+                if (word.Length == length)
+                {
+                    words.Add(word);
+                }
+            }
+            bucket = words.ToArray();
+            frenzyBuckets[length] = bucket;
+        }
+        return bucket;
     }
 
     // Returns a random word from the bucket whose first letter is not in

@@ -9,7 +9,7 @@
 //     Time.timeScale is 0, so everything that uses game time (movement, spawn
 //     timers, boss attacks) freezes; the countdown uses real time.
 //
-// THE COMBO: +1 for every kill, back to 1 on a wrong key or when you get hurt.
+// THE COMBO: +1 for every kill, -1 on a wrong key, back to 1 when you get hurt.
 // Each kill is worth 10 x combo points, and every 5 kills in a row earn a
 // power charge (lure bomb or freeze, see Powers). So clean typing pays twice.
 //
@@ -30,8 +30,9 @@ public enum GameState
     Playing,  // riding, fighting, typing
     Paused,   // Esc was pressed: pause panel, or the 3-2-1 countdown before play resumes
     Tip,      // a first-time tip box is showing (game frozen); Enter or OK continues
-    Won,      // the last area was cleared, "You survived" panel is showing
-    Lost      // health reached 0, "You died" panel is showing
+    Won,      // the last area was cleared, "You survived" panel is showing (Enter / Continue: leaderboard)
+    Lost,     // health reached 0, "You died" panel is showing
+    Scores    // the leaderboard page after Won / Lost: type a name, then Play again or Quit
 }
 
 public class GameManager : MonoBehaviour
@@ -65,12 +66,6 @@ public class GameManager : MonoBehaviour
         get { return powers; }
     }
 
-    // Restart reloads the scene, which would normally show the Start panel again.
-    // This flag survives the reload (static fields are not part of the scene) and
-    // tells the fresh GameManager to begin right away. That is safe because the
-    // browser already gave us keyboard focus the first time Start was clicked.
-    private static bool startImmediatelyAfterReload;
-
     private void Awake()
     {
         Instance = this;
@@ -89,12 +84,6 @@ public class GameManager : MonoBehaviour
         hud.SetCombo(Combo);
         hud.SetHealth(Health, startingHealth);
         hud.ShowStartPanel();
-
-        if (startImmediatelyAfterReload)
-        {
-            startImmediatelyAfterReload = false;
-            StartGame();
-        }
     }
 
     private void OnDestroy()
@@ -198,13 +187,36 @@ public class GameManager : MonoBehaviour
         State = GameState.Playing;
         hud.HideAllPanels();
         spawner.BeginWaves();
+
+        // Before anything happens, explain what the combo buys (a tip box; the
+        // game waits for Enter / OK). Shown once, not again after a Restart.
+        RequestTip("combo weapons", "COMBO WEAPONS",
+            "Type without mistakes to build your COMBO (top of the screen), then SPEND it on a weapon:\n\n"
+            + "<color=#FF4D33>[3] FRENZY</color> - costs " + Powers.FrenzyCost + " combo: for 5 seconds every enemy word\n"
+            + "turns into a TINY red word (1 to 4 letters - even a single letter!).\n"
+            + "<color=#FF8C1A>[4] RPG</color> - costs " + Powers.RocketCost + " combo: your next finished word fires a rocket\n"
+            + "that blows up everything around its target (it hurts the boss too).\n\n"
+            + "Press 3 / 4 to GET a weapon: it is kept bottom-left (2 slots each) until you want it.\n"
+            + "Press the key again (or click its icon) to USE it. Weaker against the boss!\n"
+            + "One weapon per wave. A wrong key costs 1 combo; a bite resets it.\n"
+            + "Lure bombs [1] and freezes [2] come from supply crates.",
+            Palette.BlastOrange);
     }
 
-    // Called by the Restart buttons (wired in the scene) and by StartOrRestart().
+    // Spends combo on a weapon (Powers): the combo goes down by 'amount' (never below 1).
+    public void SpendCombo(int amount)
+    {
+        Combo = Mathf.Max(1, Combo - amount);
+        hud.SetCombo(Combo);
+        powers.OnComboChanged(Combo);
+    }
+
+    // Called by the pause panel's Restart and the leaderboard's Play again (and
+    // Enter there): reloads the scene, which shows the Start panel, the same
+    // screen as when the game is first opened.
     public void RestartGame()
     {
         Time.timeScale = 1f; // in case we restart from the pause panel
-        startImmediatelyAfterReload = true;
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
@@ -218,7 +230,7 @@ public class GameManager : MonoBehaviour
         }
         else if (State == GameState.Won || State == GameState.Lost)
         {
-            RestartGame();
+            OpenLeaderboard();
         }
         else if (State == GameState.Tip)
         {
@@ -306,11 +318,24 @@ public class GameManager : MonoBehaviour
         Stats.CorrectKeys += 1;
     }
 
-    // A wrong key: counts against accuracy and resets the combo.
+    // A wrong key: counts against accuracy and costs one step of combo.
     public void OnWrongKey()
     {
         Stats.WrongKeys += 1;
-        ResetCombo();
+        LoseComboStep();
+    }
+
+    // A wrong key costs one step of combo (never below 1). Getting hurt still
+    // resets it completely (ResetCombo).
+    public void LoseComboStep()
+    {
+        if (Combo <= 1)
+        {
+            return;
+        }
+        Combo -= 1;
+        hud.SetCombo(Combo);
+        powers.OnComboChanged(Combo);
     }
 
     // ---- Kills and score ----
@@ -375,7 +400,7 @@ public class GameManager : MonoBehaviour
         return gained;
     }
 
-    // Called on a wrong key, and when the player takes damage.
+    // Called when the player takes damage (a wrong key only costs one step, see LoseComboStep).
     public void ResetCombo()
     {
         if (Combo == 1)
@@ -442,6 +467,91 @@ public class GameManager : MonoBehaviour
         }
 
         Stats.Score = Score;
+        gameWon = won;
         hud.ShowResults(won, Stats);
+    }
+
+    // ---- Leaderboard (after the results panel) ----
+    // Continue (or Enter) on the results panel opens the leaderboard page: the
+    // player types a name (Enter saves it with the score, see Leaderboard),
+    // sees their rank among the six best, then plays again or quits.
+
+    private bool gameWon;
+    private string typedName = "";
+    private bool nameSaved;
+
+    // Called by the results panel's Continue button (HUD) and by Enter.
+    public void OpenLeaderboard()
+    {
+        if (State != GameState.Won && State != GameState.Lost)
+        {
+            return;
+        }
+        State = GameState.Scores;
+        typedName = "";
+        nameSaved = false;
+        hud.ShowLeaderboard(gameWon, Stats.Score); // the score frozen at the end (late blasts do not count)
+        hud.SetLeaderboardName(typedName);
+    }
+
+    // Called by TypingController every frame on the leaderboard page with what
+    // was typed. Before the name is saved: letters build the name, Backspace
+    // removes one, Enter saves it. After: Enter plays again.
+    public void OnLeaderboardInput(string typed, bool backspace, bool enter)
+    {
+        if (State != GameState.Scores)
+        {
+            return;
+        }
+        if (nameSaved)
+        {
+            if (enter)
+            {
+                RestartGame();
+            }
+            return;
+        }
+
+        foreach (char character in typed)
+        {
+            if (!char.IsControl(character) && typedName.Length < Leaderboard.MaxNameLength
+                && (typedName.Length > 0 || !char.IsWhiteSpace(character)))
+            {
+                typedName += character;
+            }
+        }
+        if (backspace && typedName.Length > 0)
+        {
+            typedName = typedName.Substring(0, typedName.Length - 1);
+        }
+        hud.SetLeaderboardName(typedName);
+
+        if (enter)
+        {
+            SubmitName();
+        }
+    }
+
+    // Saves the name with the score and shows the player's place.
+    public void SubmitName()
+    {
+        if (State != GameState.Scores || nameSaved)
+        {
+            return;
+        }
+        nameSaved = true;
+        string playerName = Leaderboard.CleanName(typedName);
+        int rank = Leaderboard.Add(playerName, Stats.Score);
+        hud.ShowLeaderboardRank(rank, playerName, Stats.Score);
+    }
+
+    // The Quit button: closes the game (in the Unity Editor: stops Play mode).
+    public void QuitGame()
+    {
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 }

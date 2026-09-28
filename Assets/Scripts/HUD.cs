@@ -2,9 +2,13 @@
 // ---------------------------------------------------------------------------
 // Everything drawn on the screen-space Canvas:
 //   - health bar (top-left)
-//   - "Wave 2 / 5", Score and Combo (top-right). Under them: what the combo
-//     earns next ("Next: FREEZE in 3 kills" + a thin bar)
-//   - the powers (bottom-left): "[1] LURE BOMB" and "[2] FREEZE" with their charges
+//   - "Wave 2 / 5" and Score (top-right)
+//   - the COMBO, big, on a dark plate at the top-centre (nothing covers it). Under
+//     it: what the combo can buy (the COMBO WEAPONS status line + a thin bar)
+//   - the powers (bottom-left, just above the height of the bottom word box so
+//     they never overlap it): "[1] LURE BOMB" and "[2] FREEZE" with their charges,
+//     and the combo weapons kept for later, "[3] FRENZY" (skull) and "[4] RPG"
+//     (rocket): lit while one is kept, clickable to use it
 //   - while 1 is held (aiming the lure bomb): an arrow-keys hint in a dark box
 //     (bottom-right); a "+1" next to a power whenever a charge is gained
 //   - the first-time power tip box (the game waits until Enter / OK)
@@ -67,7 +71,9 @@ public class HUD : MonoBehaviour
 
     [Header("Boss health bar (built in code, see BuildBossBar)")]
     [SerializeField] private Vector2 bossBarSize = new Vector2(700f, 26f);
-    [SerializeField] private float bossBarTopMargin = 70f; // pixels from the top of the screen
+    // The bar sits under the combo plate (top-centre): a constant, not an Inspector
+    // value, because the scene keeps the old value saved.
+    private const float BossBarTop = 190f; // canvas units from the top of the screen (its title is above it)
     [SerializeField] private Color bossBarColor = new Color(0.85f, 0.1f, 0.1f);
 
     [Header("Enemy words (built in code, see CreateWordLabel)")]
@@ -128,6 +134,8 @@ public class HUD : MonoBehaviour
         UpdateRedFlash();
         UpdatePowerPulses();
         UpdateComboRewardBar();
+        UpdateComboLook();
+        UpdateLeaderboard();
         UpdateHint();
         UpdateQuizPop();
     }
@@ -157,9 +165,161 @@ public class HUD : MonoBehaviour
         scoreText.text = "Score " + score;
     }
 
+    // ---- Combo (top-centre, big) ----
+    // "COMBO x12" in big letters on a dark plate at the top-centre, drawn over
+    // everything in the game (the readout layer is above the enemy words). It
+    // pops when the combo goes up, shakes red when it goes down, and changes
+    // colour once it can buy a weapon. The weapon status line and its bar sit
+    // just under it on the same plate (SetWeaponStatus).
+
+    private const float ComboPlateTop = 6f;          // canvas units below the top edge
+    private static readonly Vector2 ComboPlateSize = new Vector2(560f, 128f);
+    private const float ComboTextTop = 10f;
+    private const float ComboFontSize = 64f;
+    private const float ComboPopScale = 1.35f;
+    private const float ComboPopSeconds = 0.25f;
+    private const float ComboShakeSeconds = 0.3f;
+    private const float ComboShakeDistance = 10f;
+
+    private RectTransform comboPlate;   // null until the first SetCombo
+    private int shownCombo = 1;
+    private float comboPopTimer;        // counts down while the number pops (combo up)
+    private float comboShakeTimer;      // counts down while it shakes red (combo down)
+
     public void SetCombo(int combo)
     {
-        comboText.text = "Combo x" + combo;
+        if (comboPlate == null)
+        {
+            BuildComboPlate();
+        }
+        if (combo > shownCombo)
+        {
+            comboPopTimer = ComboPopSeconds;
+        }
+        else if (combo < shownCombo)
+        {
+            comboShakeTimer = ComboShakeSeconds;
+        }
+        shownCombo = combo;
+        comboText.text = "<size=50%>COMBO</size> x" + combo;
+        UpdateComboLook();
+    }
+
+    // The combo's colour: white, then the FRENZY red once it can buy a frenzy,
+    // then the RPG orange once it can buy an RPG.
+    private Color ComboColor()
+    {
+        if (shownCombo >= Powers.RocketCost)
+        {
+            return Palette.BlastOrange;
+        }
+        if (shownCombo >= Powers.FrenzyCost)
+        {
+            return Palette.WeaponFrenzy;
+        }
+        return Color.white;
+    }
+
+    private void UpdateComboLook()
+    {
+        if (comboPlate == null)
+        {
+            return;
+        }
+        comboPopTimer = Mathf.Max(0f, comboPopTimer - Time.unscaledDeltaTime);
+        comboShakeTimer = Mathf.Max(0f, comboShakeTimer - Time.unscaledDeltaTime);
+
+        float pop = comboPopTimer / ComboPopSeconds;              // 1 -> 0
+        float scale = Mathf.Lerp(1f, ComboPopScale, pop * pop);
+        comboText.rectTransform.localScale = new Vector3(scale, scale, 1f);
+
+        float shake = comboShakeTimer / ComboShakeSeconds;        // 1 -> 0
+        float offset = Mathf.Sin(comboShakeTimer * 70f) * ComboShakeDistance * shake;
+        comboText.rectTransform.anchoredPosition = new Vector2(offset, -ComboTextTop);
+
+        Color rest = ComboColor();
+        comboText.color = Color.Lerp(rest, new Color(1f, 0.15f, 0.1f), shake);
+
+        PlaceComboPlate();
+    }
+
+    private const float ComboSideGap = 24f;       // at least this much space beside the health bar and the Wave / Score texts
+    private const float ComboMinScale = 0.55f;
+
+    private const float HealthBarMinWidth = 140f; // the health bar is never shortened below this
+
+    private float healthBarFullWidth = -1f;       // the bar's width as saved in the scene (read on first use)
+
+    // The plate always stays centred. On a narrower window, where it would
+    // reach the health bar (top-left), the health bar gets SHORTER instead
+    // (never below HealthBarMinWidth). Only if that is still not enough, or
+    // the plate would reach the Wave / Score texts (top-right), does the plate
+    // get smaller (still centred): it never covers them.
+    private void PlaceComboPlate()
+    {
+        float width = readoutLayer.rect.width;
+        float centre = width * 0.5f;
+
+        // Room on the right: up to the Wave / Score texts.
+        float rightTexts = Mathf.Max(waveText != null ? waveText.preferredWidth : 0f,
+            scoreText != null ? scoreText.preferredWidth : 0f);
+        float right = width - (RightTextMargin + rightTexts + ComboSideGap);
+        float halfRoom = right - centre;
+
+        // Room on the left: up to the health bar at its SHORTEST.
+        RectTransform bar = healthBar != null ? healthBar.transform as RectTransform : null;
+        bool barOnLeft = bar != null && bar.anchorMin.x == 0f && bar.anchorMax.x == 0f; // anchored to the left edge
+        float barLeft = 0f;
+        if (barOnLeft)
+        {
+            if (healthBarFullWidth < 0f)
+            {
+                healthBarFullWidth = bar.sizeDelta.x;
+            }
+            barLeft = bar.anchoredPosition.x - bar.sizeDelta.x * bar.pivot.x;
+            float shortestRight = barLeft + Mathf.Min(HealthBarMinWidth, healthBarFullWidth);
+            halfRoom = Mathf.Min(halfRoom, centre - (shortestRight + ComboSideGap));
+        }
+
+        float scale = Mathf.Clamp(halfRoom * 2f / ComboPlateSize.x, ComboMinScale, 1f);
+        comboPlate.localScale = new Vector3(scale, scale, 1f);
+        comboPlate.anchoredPosition = new Vector2(0f, -ComboPlateTop);
+
+        // The health bar ends just before the plate (or keeps its full length).
+        if (barOnLeft)
+        {
+            float plateLeft = centre - ComboPlateSize.x * scale * 0.5f;
+            float barWidth = Mathf.Clamp(plateLeft - ComboSideGap - barLeft,
+                Mathf.Min(HealthBarMinWidth, healthBarFullWidth), healthBarFullWidth);
+            if (!Mathf.Approximately(bar.sizeDelta.x, barWidth))
+            {
+                bar.sizeDelta = new Vector2(barWidth, bar.sizeDelta.y);
+                // Keep the bar's left end where it is, whatever its pivot.
+                bar.anchoredPosition = new Vector2(barLeft + barWidth * bar.pivot.x, bar.anchoredPosition.y);
+            }
+        }
+    }
+
+    private const float RightTextMargin = 40f;    // the Wave / Score texts end this far from the right edge
+
+    // Moves the scene's Combo text (it used to sit top-right) onto a dark plate
+    // at the top-centre, in the readout layer so enemy words never cover it.
+    private void BuildComboPlate()
+    {
+        EnsureLayers();
+        Image plate = CreateImage("ComboPlate", readoutLayer, new Color(0f, 0f, 0f, 0.55f));
+        comboPlate = plate.rectTransform;
+        PlaceRect(comboPlate, TopCentre, TopCentre, new Vector2(0f, -ComboPlateTop), ComboPlateSize);
+
+        comboText.rectTransform.SetParent(comboPlate, false);
+        PlaceRect(comboText.rectTransform, TopCentre, TopCentre, new Vector2(0f, -ComboTextTop),
+            new Vector2(ComboPlateSize.x, ComboFontSize * 1.15f));
+        comboText.enableAutoSizing = false;
+        comboText.fontSize = ComboFontSize;
+        comboText.fontStyle = FontStyles.Bold;
+        comboText.alignment = TextAlignmentOptions.Center;
+        comboText.textWrappingMode = TextWrappingModes.NoWrap;
+        comboText.fontSharedMaterial = OutlineMaterial(comboText);
     }
 
     // richText is the word with TextMeshPro colour tags (see Zombie.ColoredWord),
@@ -258,6 +418,12 @@ public class HUD : MonoBehaviour
         ShowBigPopup(title, "x" + kills + " SCORE  +" + points);
     }
 
+    // Any big announcement ("FRENZY!", "RPG LOADED!"), in the multi-kill popup.
+    public void ShowBigMessage(string title, string subtitle)
+    {
+        ShowBigPopup(title, subtitle);
+    }
+
     // The big popup above the middle of the screen: a title, and a smaller line under it.
     private void ShowBigPopup(string title, string subtitle)
     {
@@ -336,6 +502,7 @@ public class HUD : MonoBehaviour
         HidePausePanel();
         HideCountdown();
         HidePowerTip();
+        HideLeaderboard();
         HideQuiz();
         if (multiKillText != null)
         {
@@ -387,7 +554,7 @@ public class HUD : MonoBehaviour
         barRect.anchorMin = new Vector2(0.5f, 1f);
         barRect.anchorMax = new Vector2(0.5f, 1f);
         barRect.pivot = new Vector2(0.5f, 1f);
-        barRect.anchoredPosition = new Vector2(0f, -bossBarTopMargin);
+        barRect.anchoredPosition = new Vector2(0f, -BossBarTop);
         barRect.sizeDelta = bossBarSize;
         bossBar.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
 
@@ -656,13 +823,22 @@ public class HUD : MonoBehaviour
     }
 
     // ---- Powers (bottom-left) ----
-    // Two rows, one per power. Row 0 = lure bomb (on top), row 1 = freeze: the
-    // same numbers as PowerKind, so (int)kind gives the row. Each row:
+    // Four rows, keys 1 to 4 from top to bottom. Row 0 = lure bomb, row 1 =
+    // freeze (the same numbers as PowerKind, so (int)kind gives the row):
     //   [1] LURE BOMB  [#][#][ ]
     // a white key cap with the key to press, the power's name, then one small
     // square ("pip") per possible charge, filled in the power's colour.
+    // Rows 2 and 3 are the COMBO WEAPONS the player has bought and kept for later:
+    //   [3] FRENZY     [skull]
+    //   [4] RPG        [rocket]
+    // the icon lights up in the weapon's colour while one is kept. These two
+    // rows can also be CLICKED to use the weapon (same as pressing its key).
 
-    private const int PowerCount = 2;
+    private const int PowerCount = 4;
+    private const int FrenzyRow = 2;
+    private const int RocketRow = 3;
+    private const float WeaponIconSlot = 44f;   // dark square behind a weapon's icon
+    private const float WeaponIconSize = 38f;
     private const float PowerRowHeight = 44f;
     private const float PowerRowGap = 10f;
     private const float PowerKeySize = 40f;
@@ -684,6 +860,7 @@ public class HUD : MonoBehaviour
     private readonly List<Image> freezePips = new List<Image>();
     private readonly int[] powerCharges = new int[PowerCount];
     private readonly float[] powerPulseTimers = new float[PowerCount]; // counts down while a row pulses
+    private readonly Image[,] weaponIcons = new Image[PowerCount, Powers.MaxKept]; // only the weapon rows have them
 
     public void SetPowers(int lureCharges, int freezeCharges, int maxCharges)
     {
@@ -694,7 +871,7 @@ public class HUD : MonoBehaviour
 
         powerCharges[(int)PowerKind.Lure] = lureCharges;
         powerCharges[(int)PowerKind.Freeze] = freezeCharges;
-        for (int row = 0; row < PowerCount; row++)
+        for (int row = 0; row < FrenzyRow; row++)
         {
             ShowPips(row, maxCharges);
             if (powerPulseTimers[row] <= 0f)
@@ -704,17 +881,50 @@ public class HUD : MonoBehaviour
         }
     }
 
-    // Makes one power slot flash and grow for a moment (a charge was just earned or used).
-    public void PulsePower(PowerKind kind)
+    // The combo weapons kept for later (Powers): one icon per slot, lit for each weapon kept.
+    public void SetWeapons(int frenzyKept, int rocketKept)
     {
         if (powersPanel == null)
         {
             BuildPowers();
         }
 
-        int row = (int)kind;
+        powerCharges[FrenzyRow] = frenzyKept;
+        powerCharges[RocketRow] = rocketKept;
+        for (int row = FrenzyRow; row <= RocketRow; row++)
+        {
+            for (int slot = 0; slot < Powers.MaxKept; slot++)
+            {
+                weaponIcons[row, slot].color = slot < powerCharges[row] ? PowerColor(row) : EmptyPipColor;
+            }
+            if (powerPulseTimers[row] <= 0f)
+            {
+                ApplyPowerRowLook(row, 0f, 0f);
+            }
+        }
+    }
+
+    // Makes one power slot flash and grow for a moment (a charge was just earned or used).
+    public void PulsePower(PowerKind kind)
+    {
+        PulseRow((int)kind);
+    }
+
+    // The same for a combo weapon's slot (rocket = the RPG, otherwise the FRENZY).
+    public void PulseWeapon(bool rocket)
+    {
+        PulseRow(rocket ? RocketRow : FrenzyRow);
+    }
+
+    private void PulseRow(int row)
+    {
+        if (powersPanel == null)
+        {
+            BuildPowers();
+        }
+
         powerPulseTimers[row] = Mathf.Max(0.01f, powerPulseSeconds);
-        powerRows[row].SetAsLastSibling(); // while it is big, it is drawn over the other row
+        powerRows[row].SetAsLastSibling(); // while it is big, it is drawn over the other rows
     }
 
     private void UpdatePowerPulses()
@@ -763,7 +973,13 @@ public class HUD : MonoBehaviour
 
     private static Color PowerColor(int row)
     {
-        return row == (int)PowerKind.Lure ? Palette.LureCrate : Palette.FreezeCrate;
+        switch (row)
+        {
+            case (int)PowerKind.Lure: return Palette.LureCrate;
+            case (int)PowerKind.Freeze: return Palette.FreezeCrate;
+            case FrenzyRow: return Palette.WeaponFrenzy;
+            default: return Palette.BlastOrange; // the RPG
+        }
     }
 
     // Shows maxCharges pips in the row (creating more when needed), filled for
@@ -800,20 +1016,39 @@ public class HUD : MonoBehaviour
         powerPipStrips[row].sizeDelta = new Vector2(stripWidth, PowerPipSize + PowerPipPadding * 2f);
     }
 
+    // Space kept between the top of the bottom word box and the corner panels.
+    private const float AboveWordBoxGap = 16f;
+
+    // How high (canvas units from the bottom edge) the bottom-left powers and the
+    // bottom-right aiming hint start: just above the TOP of the bottom-centre
+    // word box, measured from the box itself. On a narrow window the box reaches
+    // the corners, so sitting above it keeps them from ever overlapping it.
+    private float BottomRowY()
+    {
+        float y = powersMargin;
+        RectTransform box = targetWordText != null ? targetWordText.rectTransform.parent as RectTransform : null;
+        if (box != null && box.anchorMin.y == 0f && box.anchorMax.y == 0f) // anchored to the bottom edge
+        {
+            float top = box.anchoredPosition.y + box.sizeDelta.y * (1f - box.pivot.y);
+            y = Mathf.Max(y, top + AboveWordBoxGap);
+        }
+        return y;
+    }
+
     // Powers (bottom-left corner) > one row per power > KeyCap (+ Key text), Name, Pips.
     private void BuildPowers()
     {
         EnsureLayers();
         float panelHeight = PowerCount * PowerRowHeight + (PowerCount - 1) * PowerRowGap;
         powersPanel = CreateRect("Powers", readoutLayer);
-        PlaceRect(powersPanel, BottomLeft, BottomLeft, new Vector2(powersMargin, powersMargin),
+        PlaceRect(powersPanel, BottomLeft, BottomLeft, new Vector2(powersMargin, BottomRowY()),
             new Vector2(PowerPipsX + 120f, panelHeight));
 
+        string[] rowNames = { "LURE BOMB", "FREEZE", "FRENZY", "RPG" };
         for (int row = 0; row < PowerCount; row++)
         {
-            bool isLure = row == (int)PowerKind.Lure;
-            string key = isLure ? "1" : "2";
-            string powerName = isLure ? "LURE BOMB" : "FREEZE";
+            string key = (row + 1).ToString();
+            string powerName = rowNames[row];
 
             // Rows are stacked from the bottom: the last row sits at the bottom.
             // The pivot is the row's left-middle, so a pulsing row grows to the right.
@@ -840,11 +1075,57 @@ public class HUD : MonoBehaviour
             nameText.fontSharedMaterial = OutlineMaterial(nameText);
             powerNames[row] = nameText;
 
-            Image strip = CreateImage("Pips", rowRect, new Color(0f, 0f, 0f, 0.55f));
-            PlaceRect(strip.rectTransform, LeftMiddle, LeftMiddle, new Vector2(PowerPipsX, 0f), Vector2.zero);
-            powerPipStrips[row] = strip.rectTransform;
+            if (row < FrenzyRow)
+            {
+                Image strip = CreateImage("Pips", rowRect, new Color(0f, 0f, 0f, 0.55f));
+                PlaceRect(strip.rectTransform, LeftMiddle, LeftMiddle, new Vector2(PowerPipsX, 0f), Vector2.zero);
+                powerPipStrips[row] = strip.rectTransform;
+            }
+            else
+            {
+                BuildWeaponSlot(rowRect, row);
+            }
 
             ApplyPowerRowLook(row, 0f, 0f);
+        }
+        SetWeapons(0, 0);
+    }
+
+    // A weapon row: one icon per slot (Powers.MaxKept), each on a dark square
+    // where the pips would be, and the whole row is a button (clicking it uses
+    // the weapon, like its key).
+    private void BuildWeaponSlot(RectTransform rowRect, int row)
+    {
+        for (int i = 0; i < Powers.MaxKept; i++)
+        {
+            Image slot = CreateImage("IconSlot", rowRect, new Color(0f, 0f, 0f, 0.55f));
+            PlaceRect(slot.rectTransform, LeftMiddle, LeftMiddle, new Vector2(PowerPipsX + i * (WeaponIconSlot + PowerPipGap), 0f),
+                new Vector2(WeaponIconSlot, WeaponIconSlot));
+
+            Image icon = CreateImage("Icon", slot.rectTransform, EmptyPipColor);
+            icon.sprite = row == FrenzyRow ? HudIcons.Skull() : HudIcons.Rocket();
+            icon.preserveAspect = true;
+            PlaceRect(icon.rectTransform, Centre, Centre, Vector2.zero, new Vector2(WeaponIconSize, WeaponIconSize));
+            weaponIcons[row, i] = icon;
+        }
+
+        // An invisible image over the row catches the mouse click.
+        Image hitArea = rowRect.gameObject.AddComponent<Image>();
+        hitArea.color = new Color(0f, 0f, 0f, 0f);
+        Button button = rowRect.gameObject.AddComponent<Button>();
+        button.transition = Selectable.Transition.None;
+        Navigation navigation = button.navigation;
+        navigation.mode = Navigation.Mode.None; // the arrow keys aim lure bombs, they never select buttons
+        button.navigation = navigation;
+        bool rocket = row == RocketRow;
+        button.onClick.AddListener(() => OnWeaponClicked(rocket));
+    }
+
+    private void OnWeaponClicked(bool rocket)
+    {
+        if (GameManager.Instance.State == GameState.Playing)
+        {
+            GameManager.Instance.Powers.UseWeapon(rocket);
         }
     }
 
@@ -885,7 +1166,7 @@ public class HUD : MonoBehaviour
 
             Vector2 textSize = text.GetPreferredValues(AimHintText);
             Vector2 boxSize = textSize + Vector2.one * (AimHintPadding * 2f);
-            PlaceRect(aimHintBox.rectTransform, BottomRight, BottomRight, new Vector2(-powersMargin, powersMargin), boxSize);
+            PlaceRect(aimHintBox.rectTransform, BottomRight, BottomRight, new Vector2(-powersMargin, BottomRowY()), boxSize);
             StretchToParent(text.rectTransform);
         }
         aimHintBox.gameObject.SetActive(true);
@@ -899,19 +1180,30 @@ public class HUD : MonoBehaviour
     // A "+1" appears just right of that power's row, floats up and fades out.
     public void ShowPowerGain(PowerKind kind)
     {
+        ShowRowGain((int)kind);
+    }
+
+    // The same "+1" next to a combo weapon's slot when one is bought.
+    public void ShowWeaponGain(bool rocket)
+    {
+        ShowRowGain(rocket ? RocketRow : FrenzyRow);
+    }
+
+    private void ShowRowGain(int row)
+    {
         if (powersPanel == null)
         {
             BuildPowers();
         }
 
-        int row = (int)kind;
         TMP_Text plusOne = CreateText(powersPanel, "PlusOne", "+1", 34f, Vector2.zero);
         RectTransform rowRect = powerRows[row];
-        Vector2 start = rowRect.anchoredPosition + new Vector2(PowerPipsX + 140f, 0f);
+        float x = row < FrenzyRow ? PowerPipsX + 140f : PowerPipsX + Powers.MaxKept * (WeaponIconSlot + PowerPipGap) + 10f;
+        Vector2 start = rowRect.anchoredPosition + new Vector2(x, 0f);
         PlaceRect(plusOne.rectTransform, BottomLeft, LeftMiddle, start, new Vector2(80f, PowerRowHeight));
         plusOne.alignment = TextAlignmentOptions.Left;
         plusOne.fontStyle = FontStyles.Bold;
-        plusOne.color = kind == PowerKind.Lure ? Palette.LureCrate : Palette.FreezeCrate;
+        plusOne.color = PowerColor(row);
         plusOne.fontSharedMaterial = OutlineMaterial(plusOne);
         StartCoroutine(FloatAndFade(plusOne, start));
     }
@@ -932,8 +1224,21 @@ public class HUD : MonoBehaviour
     // ---- First-time power tip box (the game is frozen while it shows) ----
 
     private GameObject tipPanel;   // null until the first tip
+    private RectTransform tipBox;
     private TMP_Text tipTitle;
     private TMP_Text tipBody;
+    private TMP_Text tipHint;
+    private RectTransform tipButton;
+
+    // Tip box layout, in canvas units: the box grows to fit the text, and
+    // everything is stacked from the top, so a long text never runs into the title.
+    private const float TipBoxWidth = 1100f;
+    private const float TipTextWidth = 1000f;     // the body wraps at this width
+    private const float TipPadding = 40f;         // inside the box, top and bottom
+    private const float TipTitleSize = 56f;
+    private const float TipBodySize = 28f;
+    private const float TipGap = 28f;             // between title, body, hint and button
+    private const float TipButtonHeight = 80f;
 
     public void ShowPowerTip(string title, string body, Color titleColor)
     {
@@ -944,8 +1249,36 @@ public class HUD : MonoBehaviour
         tipTitle.text = title;
         tipTitle.color = titleColor;
         tipBody.text = body;
+        LayoutTip();
         tipPanel.transform.SetAsLastSibling(); // on top of everything
         tipPanel.SetActive(true);
+    }
+
+    // Measures the body text and stacks title, body, hint and OK button from the
+    // top of the box, then sizes the box around them.
+    private void LayoutTip()
+    {
+        float titleHeight = TipTitleSize * 1.3f;
+        float bodyHeight = tipBody.GetPreferredValues(tipBody.text, TipTextWidth, 0f).y;
+        float hintHeight = tipHint.fontSize * 1.4f;
+
+        float y = -TipPadding; // from the top of the box, going down
+        PlaceTop(tipTitle.rectTransform, y, TipTextWidth, titleHeight);
+        y -= titleHeight + TipGap;
+        PlaceTop(tipBody.rectTransform, y, TipTextWidth, bodyHeight);
+        y -= bodyHeight + TipGap;
+        PlaceTop(tipHint.rectTransform, y, TipTextWidth, hintHeight);
+        y -= hintHeight + TipGap * 0.5f;
+        PlaceTop(tipButton, y, tipButton.sizeDelta.x, TipButtonHeight);
+        y -= TipButtonHeight + TipPadding;
+
+        tipBox.sizeDelta = new Vector2(TipBoxWidth, -y);
+    }
+
+    // Puts rect at 'y' units below the top of the tip box, centred left-right.
+    private static void PlaceTop(RectTransform rect, float y, float width, float height)
+    {
+        PlaceRect(rect, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, y), new Vector2(width, height));
     }
 
     public void HidePowerTip()
@@ -965,19 +1298,23 @@ public class HUD : MonoBehaviour
         StretchToParent(panelRect);
         tipPanel.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.55f);
 
+        // The box is centred on the screen; its height is set by LayoutTip.
         Image box = CreateImage("Box", panelRect, new Color(0.03f, 0.05f, 0.1f, 0.92f));
-        PlaceRect(box.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1040f, 520f));
+        tipBox = box.rectTransform;
+        PlaceRect(tipBox, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(TipBoxWidth, 520f));
 
-        tipTitle = CreateText(box.rectTransform, "Title", "", 56f, new Vector2(0f, 190f));
+        tipTitle = CreateText(tipBox, "Title", "", TipTitleSize, Vector2.zero);
         tipTitle.fontStyle = FontStyles.Bold;
+        tipTitle.textWrappingMode = TextWrappingModes.NoWrap;
 
-        tipBody = CreateText(box.rectTransform, "Body", "", 30f, new Vector2(0f, 20f));
-        tipBody.rectTransform.sizeDelta = new Vector2(940f, 250f);
+        tipBody = CreateText(tipBox, "Body", "", TipBodySize, Vector2.zero);
         tipBody.textWrappingMode = TextWrappingModes.Normal;
+        tipBody.alignment = TextAlignmentOptions.Top;
 
-        TMP_Text hint = CreateText(box.rectTransform, "Hint", "Press ENTER to continue", 26f, new Vector2(0f, -150f));
-        hint.color = SmallTextColor;
-        CreateButton(box.rectTransform, "OkButton", "OK", new Vector2(0f, -210f), OnTipOkClicked);
+        tipHint = CreateText(tipBox, "Hint", "Press ENTER to continue", 26f, Vector2.zero);
+        tipHint.color = SmallTextColor;
+        TMP_Text okLabel = CreateButton(tipBox, "OkButton", "OK", Vector2.zero, OnTipOkClicked);
+        tipButton = (RectTransform)okLabel.rectTransform.parent;
     }
 
     private void OnTipOkClicked()
@@ -985,13 +1322,12 @@ public class HUD : MonoBehaviour
         GameManager.Instance.ConfirmTip();
     }
 
-    // ---- Combo reward (top-right, under the Combo text) ----
+    // ---- Combo reward (top-centre, on the combo plate, under the big COMBO) ----
 
-    private const float RightMargin = 40f;        // the same margin as the Wave / Score / Combo texts
-    private const float ComboRewardTop = 194f;    // the Combo text ends 190 units below the top of the screen
-    private const float ComboBarTop = 234f;
+    private const float ComboRewardTop = 82f;     // canvas units below the top of the combo plate
+    private const float ComboBarTop = 114f;
     private const float ComboBarSpeed = 2.5f;     // the bar fills / empties at up to 2.5 whole bars per second
-    private static readonly Vector2 ComboBarSize = new Vector2(260f, 8f);
+    private static readonly Vector2 ComboBarSize = new Vector2(380f, 8f);
     private static readonly Color SmallTextColor = new Color(0.8f, 0.82f, 0.86f); // light grey
 
     private TMP_Text comboRewardText;       // null until the first SetComboReward
@@ -1002,6 +1338,23 @@ public class HUD : MonoBehaviour
     private float comboRewardShown;         // the progress drawn now; slides toward comboRewardTarget
     private string lastComboReward;         // what the text shows now, so it is only rebuilt when it changes
     private int lastComboKillsToGo = -1;
+
+    // Under the combo text: the COMBO WEAPONS status (Powers), e.g.
+    // "[3] FRENZY ready!  RPG at 20" with its bar filled to 'progress' (0..1)
+    // in 'color'. The text may hold rich-text tags.
+    public void SetWeaponStatus(string text, float progress, Color color)
+    {
+        if (comboRewardText == null)
+        {
+            BuildComboReward();
+        }
+        comboRewardText.gameObject.SetActive(true);
+        comboRewardBar.gameObject.SetActive(true);
+        comboRewardTarget = Mathf.Clamp01(progress);
+        comboRewardText.text = "<color=#" + ColorUtility.ToHtmlStringRGB(color) + ">" + text + "</color>";
+        comboRewardFillImage.color = color;
+        lastComboReward = null; // SetComboReward (if ever used again) rebuilds its text
+    }
 
     // Under the combo text: what the combo earns next and how close it is,
     // e.g. SetComboReward("FREEZE", 3, 0.4f) -> "Next: FREEZE in 3 kills" with a 40% bar.
@@ -1082,20 +1435,24 @@ public class HUD : MonoBehaviour
         comboRewardFill.anchorMax = new Vector2(comboRewardShown, 1f);
     }
 
-    // ComboReward (text) and ComboRewardBar (dark) > Fill, right-aligned under the Combo text.
+    // ComboReward (text) and ComboRewardBar (dark) > Fill, centred on the combo plate under the big COMBO.
     private void BuildComboReward()
     {
-        EnsureLayers();
-        comboRewardText = CreateText(readoutLayer, "ComboReward", "", 28f, Vector2.zero);
-        PlaceRect(comboRewardText.rectTransform, TopRight, TopRight, new Vector2(-RightMargin, -ComboRewardTop),
-            new Vector2(700f, 36f));
-        comboRewardText.alignment = TextAlignmentOptions.Right;
+        if (comboPlate == null)
+        {
+            BuildComboPlate();
+        }
+        comboRewardText = CreateText(comboPlate, "ComboReward", "", 24f, Vector2.zero);
+        PlaceRect(comboRewardText.rectTransform, TopCentre, TopCentre, new Vector2(0f, -ComboRewardTop),
+            new Vector2(ComboPlateSize.x - 20f, 30f));
+        comboRewardText.alignment = TextAlignmentOptions.Center;
+        comboRewardText.fontStyle = FontStyles.Bold;
         comboRewardText.textWrappingMode = TextWrappingModes.NoWrap;
         comboRewardText.color = SmallTextColor;
 
-        Image bar = CreateImage("ComboRewardBar", readoutLayer, new Color(0f, 0f, 0f, 0.6f));
+        Image bar = CreateImage("ComboRewardBar", comboPlate, new Color(0.2f, 0.21f, 0.24f, 0.9f));
         comboRewardBar = bar.rectTransform;
-        PlaceRect(comboRewardBar, TopRight, TopRight, new Vector2(-RightMargin, -ComboBarTop), ComboBarSize);
+        PlaceRect(comboRewardBar, TopCentre, TopCentre, new Vector2(0f, -ComboBarTop), ComboBarSize);
 
         // The fill is anchored to the bar's left edge; its right anchor is the progress.
         comboRewardFillImage = CreateImage("Fill", comboRewardBar, Yellow);
@@ -1503,7 +1860,7 @@ public class HUD : MonoBehaviour
 
     // ---- Boss quiz (top-centre, under the boss health bar) ----
 
-    private const float QuizTop = 120f;              // canvas units below the top edge (the boss bar is above)
+    private const float QuizTop = 232f;              // canvas units below the top edge (combo and boss bar are above)
     private const float QuizMaxTextWidth = 1300f;    // longer questions wrap onto more lines
     private const float QuizMinBoxWidth = 760f;
     private const float QuizSidePadding = 50f;
@@ -1651,6 +2008,276 @@ public class HUD : MonoBehaviour
 
         // The stats replace "Final score: ...".
         message.text = StatsText(stats);
+
+        // The panel's Restart button becomes Continue: it leads to the leaderboard.
+        TurnRestartIntoContinue(won ? wonPanel : lostPanel);
+    }
+
+    private static void TurnRestartIntoContinue(GameObject panel)
+    {
+        foreach (Button button in panel.GetComponentsInChildren<Button>(true))
+        {
+            // A new event also drops the Restart call saved in the scene.
+            button.onClick = new Button.ButtonClickedEvent();
+            button.onClick.AddListener(() => GameManager.Instance.OpenLeaderboard());
+            TMP_Text label = button.GetComponentInChildren<TMP_Text>(true);
+            if (label != null)
+            {
+                label.text = "Continue";
+            }
+        }
+    }
+
+    // ---- Leaderboard page (after the results panel) ----
+    // A full-screen page, built in code the first time:
+    //   LEADERBOARD
+    //   YOU SURVIVED    Score 12750
+    //   Type your name, then press ENTER        (then: "You placed #3!")
+    //   [ NAME_ ]  [SAVE]
+    //   RANK  NAME           SCORE
+    //   #1    ALICE          15200   <- six rows, the new entry highlighted
+    //   ...
+    //   [PLAY AGAIN]  [QUIT]                   (shown once the name is saved)
+    // GameManager feeds it (ShowLeaderboard, SetLeaderboardName, ShowLeaderboardRank).
+
+    private const float BoardRowWidth = 900f;
+    private const float BoardRowHeight = 56f;
+    private const float BoardRowStep = 64f;
+    private const float BoardFirstRowY = 20f;       // from the centre of the screen
+    private static readonly Color BoardGold = new Color(1f, 0.82f, 0.25f);
+    private static readonly Color BoardSilver = new Color(0.8f, 0.84f, 0.9f);
+    private static readonly Color BoardBronze = new Color(0.85f, 0.55f, 0.3f);
+
+    private GameObject boardPanel;           // null until the first leaderboard
+    private TMP_Text boardHeading;
+    private TMP_Text boardPrompt;
+    private GameObject boardNameEntry;       // the name box and SAVE button
+    private TMP_Text boardNameText;
+    private GameObject boardEndButtons;      // PLAY AGAIN, QUIT and their hint
+    private readonly Image[] boardRows = new Image[Leaderboard.Size];
+    private readonly TMP_Text[] boardRanks = new TMP_Text[Leaderboard.Size];
+    private readonly TMP_Text[] boardNames = new TMP_Text[Leaderboard.Size];
+    private readonly TMP_Text[] boardScores = new TMP_Text[Leaderboard.Size];
+    private string boardTypedName = "";
+    private int boardHighlight = -1;         // the row of the new entry (-1 = none)
+    private float boardHighlightAge;
+
+    public void ShowLeaderboard(bool won, int score)
+    {
+        if (boardPanel == null)
+        {
+            BuildLeaderboard();
+        }
+        HideAllPanels();
+        SetTargetWord("");
+
+        string result = won ? "<color=#5BE37A>YOU SURVIVED</color>" : "<color=#FF4D4D>YOU DIED</color>";
+        boardHeading.text = result + "     <color=#9AA3AE>Score</color> <b>" + score + "</b>";
+        boardPrompt.text = Leaderboard.Qualifies(score)
+            ? "A top-" + Leaderboard.Size + " score! Type your name, then press ENTER"
+            : "Type your name, then press ENTER";
+        boardPrompt.color = Color.white;
+        boardNameEntry.SetActive(true);
+        boardEndButtons.SetActive(false);
+        boardHighlight = -1;
+        RefreshBoardRows();
+
+        boardPanel.transform.SetAsLastSibling(); // over everything
+        boardPanel.SetActive(true);
+    }
+
+    // The name being typed (drawn with a blinking cursor, see UpdateLeaderboard).
+    public void SetLeaderboardName(string typedName)
+    {
+        boardTypedName = typedName ?? "";
+        DrawBoardName();
+    }
+
+    // The name is saved: rank = its place (1..Size), 0 = not on the board.
+    public void ShowLeaderboardRank(int rank, string playerName, int score)
+    {
+        if (boardPanel == null)
+        {
+            return;
+        }
+        boardNameEntry.SetActive(false);
+        boardEndButtons.SetActive(true);
+        boardPrompt.richText = true;
+        if (rank > 0)
+        {
+            boardPrompt.text = "<size=130%><b>You placed #" + rank + "!</b></size>";
+            boardPrompt.color = BoardGold;
+            boardHighlight = rank - 1;
+            boardHighlightAge = 0f;
+        }
+        else
+        {
+            boardPrompt.text = "Not in the top " + Leaderboard.Size + " this time (" + score + ") - try again!";
+            boardPrompt.color = BoardSilver;
+            boardHighlight = -1;
+        }
+        RefreshBoardRows();
+    }
+
+    private void HideLeaderboard()
+    {
+        if (boardPanel != null)
+        {
+            boardPanel.SetActive(false);
+        }
+    }
+
+    // Every frame while the page is open: the blinking cursor and the new row's glow.
+    private void UpdateLeaderboard()
+    {
+        if (boardPanel == null || !boardPanel.activeSelf)
+        {
+            return;
+        }
+        if (boardNameEntry.activeSelf)
+        {
+            DrawBoardName();
+        }
+        if (boardHighlight >= 0)
+        {
+            boardHighlightAge += Time.unscaledDeltaTime;
+            float pop = Mathf.Exp(-boardHighlightAge * 5f);                        // a pop when it appears...
+            float glow = 0.5f + 0.5f * Mathf.Sin(boardHighlightAge * 5f);          // ...then a slow glow
+            float scale = 1f + 0.12f * pop;
+            boardRows[boardHighlight].rectTransform.localScale = new Vector3(scale, scale, 1f);
+            boardRows[boardHighlight].color = new Color(BoardGold.r, BoardGold.g, BoardGold.b, 0.25f + 0.2f * glow);
+        }
+    }
+
+    private void DrawBoardName()
+    {
+        if (boardNameText == null)
+        {
+            return;
+        }
+        bool cursorOn = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
+        string cursor = cursorOn ? "_" : " ";
+        if (boardTypedName.Length == 0)
+        {
+            boardNameText.text = cursor + "YOUR NAME";
+            boardNameText.color = new Color(0.55f, 0.57f, 0.62f);
+        }
+        else
+        {
+            boardNameText.text = boardTypedName + cursor;
+            boardNameText.color = Color.white;
+        }
+    }
+
+    // Fills the six rows from Leaderboard.Entries; empty places show dashes.
+    private void RefreshBoardRows()
+    {
+        List<Leaderboard.Entry> entries = Leaderboard.Entries;
+        for (int i = 0; i < Leaderboard.Size; i++)
+        {
+            bool filled = i < entries.Count;
+            Color rankColor = i == 0 ? BoardGold : (i == 1 ? BoardSilver : (i == 2 ? BoardBronze : Color.white));
+            boardRanks[i].text = "#" + (i + 1);
+            boardRanks[i].color = rankColor;
+            boardNames[i].text = filled ? entries[i].Name : "---";
+            boardScores[i].text = filled ? entries[i].Score.ToString() : "---";
+
+            bool mine = i == boardHighlight;
+            Color textColor = mine ? BoardGold : (filled ? Color.white : new Color(0.45f, 0.47f, 0.52f));
+            boardNames[i].color = textColor;
+            boardScores[i].color = textColor;
+            boardRows[i].color = mine ? new Color(BoardGold.r, BoardGold.g, BoardGold.b, 0.35f)
+                : new Color(1f, 1f, 1f, i % 2 == 0 ? 0.07f : 0.03f);
+            boardRows[i].rectTransform.localScale = Vector3.one;
+        }
+    }
+
+    // BoardPanel (dark, full screen) > Title, Heading, Prompt, NameEntry (box,
+    // SAVE), column captions, six Rows (Rank, Name, Score), EndButtons.
+    private void BuildLeaderboard()
+    {
+        boardPanel = new GameObject("LeaderboardPanel", typeof(RectTransform), typeof(Image));
+        RectTransform panel = boardPanel.GetComponent<RectTransform>();
+        panel.SetParent(transform, false);
+        StretchToParent(panel);
+        boardPanel.GetComponent<Image>().color = new Color(0.02f, 0.03f, 0.06f, 0.94f);
+
+        TMP_Text title = CreateText(panel, "Title", "LEADERBOARD", 84f, new Vector2(0f, 430f));
+        title.fontStyle = FontStyles.Bold;
+        title.color = BoardGold;
+        title.fontSharedMaterial = OutlineMaterial(title);
+
+        boardHeading = CreateText(panel, "Heading", "", 38f, new Vector2(0f, 350f));
+        boardPrompt = CreateText(panel, "Prompt", "", 30f, new Vector2(0f, 280f));
+
+        // Name entry: a dark box with a yellow edge, and a SAVE button.
+        boardNameEntry = CreateRect("NameEntry", panel).gameObject;
+        RectTransform entry = (RectTransform)boardNameEntry.transform;
+        PlaceRect(entry, Centre, Centre, new Vector2(0f, 190f), new Vector2(BoardRowWidth, 84f));
+        Image edge = CreateImage("Edge", entry, BoardGold);
+        PlaceRect(edge.rectTransform, LeftMiddle, LeftMiddle, Vector2.zero, new Vector2(640f, 84f));
+        Image box = CreateImage("Box", edge.rectTransform, new Color(0.06f, 0.07f, 0.1f));
+        StretchToParent(box.rectTransform);
+        box.rectTransform.offsetMin = new Vector2(3f, 3f);
+        box.rectTransform.offsetMax = new Vector2(-3f, -3f);
+        boardNameText = CreateText(box.rectTransform, "Name", "", 46f, Vector2.zero);
+        StretchToParent(boardNameText.rectTransform);
+        boardNameText.richText = false; // a typed "<" is just a character
+        boardNameText.textWrappingMode = TextWrappingModes.NoWrap;
+        TMP_Text save = CreateButton(entry, "SaveButton", "SAVE", Vector2.zero, () => GameManager.Instance.SubmitName());
+        RectTransform saveRect = (RectTransform)save.rectTransform.parent;
+        PlaceRect(saveRect, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), Vector2.zero, new Vector2(230f, 84f));
+        save.rectTransform.sizeDelta = saveRect.sizeDelta;
+        saveRect.GetComponent<Image>().color = new Color(0.2f, 0.45f, 0.25f);
+
+        // Column captions.
+        float captionY = BoardFirstRowY + BoardRowStep - 4f;
+        AddBoardCell(panel, "RankCaption", "RANK", captionY, -BoardRowWidth * 0.5f + 30f, 120f, TextAlignmentOptions.Left, 24f).color = SmallTextColor;
+        AddBoardCell(panel, "NameCaption", "NAME", captionY, -BoardRowWidth * 0.5f + 170f, 450f, TextAlignmentOptions.Left, 24f).color = SmallTextColor;
+        AddBoardCell(panel, "ScoreCaption", "SCORE", captionY, BoardRowWidth * 0.5f - 230f, 200f, TextAlignmentOptions.Right, 24f).color = SmallTextColor;
+
+        for (int i = 0; i < Leaderboard.Size; i++)
+        {
+            float y = BoardFirstRowY - i * BoardRowStep;
+            Image row = CreateImage("Row" + (i + 1), panel, Color.clear);
+            PlaceRect(row.rectTransform, Centre, Centre, new Vector2(0f, y), new Vector2(BoardRowWidth, BoardRowHeight));
+            boardRows[i] = row;
+
+            boardRanks[i] = AddBoardCell(row.rectTransform, "Rank", "", 0f, 30f, 120f, TextAlignmentOptions.Left, 38f);
+            boardRanks[i].fontStyle = FontStyles.Bold;
+            boardNames[i] = AddBoardCell(row.rectTransform, "Name", "", 0f, 170f, 450f, TextAlignmentOptions.Left, 38f);
+            boardNames[i].richText = false;
+            boardScores[i] = AddBoardCell(row.rectTransform, "Score", "", 0f, BoardRowWidth - 230f, 200f, TextAlignmentOptions.Right, 38f);
+            boardScores[i].fontStyle = FontStyles.Bold;
+        }
+
+        // Play again / Quit, shown once the name is saved.
+        boardEndButtons = CreateRect("EndButtons", panel).gameObject;
+        RectTransform buttons = (RectTransform)boardEndButtons.transform;
+        PlaceRect(buttons, Centre, Centre, new Vector2(0f, -430f), new Vector2(BoardRowWidth, 140f));
+        TMP_Text again = CreateButton(buttons, "PlayAgainButton", "PLAY AGAIN", new Vector2(-190f, 20f), () => GameManager.Instance.RestartGame());
+        again.transform.parent.GetComponent<Image>().color = new Color(0.2f, 0.45f, 0.25f);
+        TMP_Text quit = CreateButton(buttons, "QuitButton", "QUIT", new Vector2(190f, 20f), () => GameManager.Instance.QuitGame());
+        quit.transform.parent.GetComponent<Image>().color = new Color(0.5f, 0.18f, 0.18f);
+        TMP_Text hint = CreateText(buttons, "Hint", "(or press ENTER to play again)", 24f, new Vector2(0f, -50f));
+        hint.color = SmallTextColor;
+
+        boardPanel.SetActive(false);
+    }
+
+    // One text in a leaderboard row. x = its left edge from the row's left edge
+    // (for the captions, from the screen centre); width = how wide it may be.
+    private TMP_Text AddBoardCell(RectTransform parent, string cellName, string text, float y, float x, float width,
+        TextAlignmentOptions alignment, float fontSize)
+    {
+        TMP_Text cell = CreateText(parent, cellName, text, fontSize, Vector2.zero);
+        bool inRow = parent != boardPanel.transform;
+        Vector2 anchor = inRow ? LeftMiddle : Centre;
+        PlaceRect(cell.rectTransform, anchor, LeftMiddle, new Vector2(x, y), new Vector2(width, fontSize * 1.3f));
+        cell.alignment = alignment;
+        cell.textWrappingMode = TextWrappingModes.NoWrap;
+        cell.overflowMode = TextOverflowModes.Ellipsis;
+        return cell;
     }
 
     // Four lines, e.g.

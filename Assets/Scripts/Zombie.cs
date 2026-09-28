@@ -184,7 +184,51 @@ public class Zombie : MonoBehaviour, ITypingTarget
     public void MarkChainLinked()
     {
         IsChainLinked = true;
-        Label.color = Palette.WordChain;
+        if (realWord != null)
+        {
+            realColor = Palette.WordChain; // purple again once the frenzy is over
+        }
+        else
+        {
+            Label.color = Palette.WordChain;
+        }
+    }
+
+    // ---- FRENZY (a combo weapon, see Powers) ----
+    // While it lasts the zombie carries a SHORT word (4 letters at most) in a
+    // vivid colour; afterwards it gets its real word (and colour) back.
+
+    private string realWord;   // the real word under the frenzy word (null = no frenzy word)
+    private Color realColor;
+
+    public void EnterFrenzy(string shortWord)
+    {
+        if (!IsAlive || realWord != null)
+        {
+            return;
+        }
+        realWord = Word;
+        realColor = Label.color;
+        Word = shortWord;
+        TypedCount = 0;
+        Label.color = Palette.WordFrenzy;
+        RefreshLabel();
+    }
+
+    public void ExitFrenzy()
+    {
+        if (realWord == null)
+        {
+            return;
+        }
+        Word = realWord;
+        realWord = null;
+        TypedCount = 0;
+        if (IsAlive)
+        {
+            Label.color = realColor;
+            RefreshLabel();
+        }
     }
 
     private void Update()
@@ -459,6 +503,16 @@ public class Zombie : MonoBehaviour, ITypingTarget
         Word = WordBank.PickWord(used, ZombieKind.Armored);
         TypedCount = 0;
         Label.color = Color.white;
+
+        // Broken during a FRENZY: the new word is its real word for later, and
+        // it carries another short word for now.
+        if (realWord != null)
+        {
+            realWord = Word;
+            realColor = Color.white;
+            Word = WordBank.PickFrenzyWord(used);
+            Label.color = Palette.WordFrenzy;
+        }
         RefreshLabel();
     }
 

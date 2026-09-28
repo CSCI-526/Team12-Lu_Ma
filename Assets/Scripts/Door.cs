@@ -35,7 +35,7 @@ public class Door : MonoBehaviour
         Camera view = Camera.main;
         if (view != null)
         {
-            float distance = Vector3.Distance(view.transform.position, transform.position);
+            float distance = Vector3.Distance(CameraDirector.PlayerEye, transform.position);
             float strength = Shake * Mathf.Clamp01(1f - distance / ShakeRange);
             if (strength > 0.01f)
             {

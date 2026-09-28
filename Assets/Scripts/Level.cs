@@ -30,9 +30,9 @@
 // 45 degrees to each side, and the view turns up to 12 degrees toward the
 // word being typed.
 //
-// The two thin rails along the run are the only thing built by code (when the
-// game starts), because they follow the route points: move a point and the
-// rails follow. In the Scene view the run is drawn as a cyan line.
+// The only thing built by code (when the game starts) is the route guide: faint
+// arrows on the ground along the route points (move a point and they follow).
+// In the Scene view the run is drawn as a cyan line.
 // ---------------------------------------------------------------------------
 using System.Collections.Generic;
 using UnityEngine;
@@ -40,9 +40,6 @@ using UnityEngine;
 [DefaultExecutionOrder(-200)] // ready before WaveSpawner starts (it reads Encounters in its Awake)
 public class Level : MonoBehaviour
 {
-    private const float RailGap = 0.75f;          // each rail is this far from the middle of the run
-    private const float RailHeight = 0.08f;       // just above the paving
-
     [SerializeField] private Transform start;        // where the player stands before the first run; blue arrow = facing
     [SerializeField] private Encounter[] encounters; // the fights, in the order they are played
 
@@ -76,41 +73,84 @@ public class Level : MonoBehaviour
             }
         }
 
-        // Rails along the whole run: from the start through every fight's route.
+        // Faint arrows on the ground along the whole run: from the start through
+        // every fight's route to its stop.
+        Transform guide = new GameObject("Route guide").transform;
+        guide.SetParent(transform, true); // true: stays at the world's origin, so the arrows sit on the route points
         Vector3 from = StartPosition;
         foreach (Encounter encounter in Encounters)
         {
             List<Vector3> points = encounter.Route;
             points.Insert(0, from);
-            BuildRails(points);
+            PaintArrows(points, guide);
             from = points[points.Count - 1];
         }
     }
 
-    // Two thin rails along a route, like the first prototype's corridor.
-    private void BuildRails(List<Vector3> route)
-    {
-        Transform rails = new GameObject("Rails").transform;
-        rails.SetParent(transform, true); // true: stays at the world's origin, so the rails sit on the route points
-        Material railMaterial = Palette.Lit(Palette.Rail);
+    // ---- Route guide ----
+    // Small flat chevrons (">") painted on the paving every GuideSpacing metres,
+    // pointing the way the player runs: they show the route like the old rails
+    // did, but lie flat, in a soft sand colour, and cast no shadow.
 
+    private const float GuideSpacing = 3.2f;     // metres between two arrows
+    private const float GuideEndGap = 2f;        // no arrow this close to a stop (or the start)
+    private const float GuideArmLength = 0.55f;
+    private const float GuideArmWidth = 0.09f;
+    private const float GuideArmAngle = 38f;     // degrees each arm is turned from the running direction
+    private const float GuideHeight = 0.025f;    // just above the paving
+
+    private static void PaintArrows(List<Vector3> route, Transform parent)
+    {
+        Material material = Palette.Lit(Palette.RouteGuide);
+
+        // Walk the route, dropping an arrow every GuideSpacing metres (the
+        // spacing carries on around corners, so the arrows stay evenly spaced).
+        float total = 0f;
         for (int i = 0; i + 1 < route.Count; i++)
         {
-            Vector3 from = route[i];
-            Vector3 to = route[i + 1];
-            Vector3 along = to - from;
-            along.y = 0f;
-            if (along.sqrMagnitude < 0.01f)
+            total += Flat(route[i + 1] - route[i]).magnitude;
+        }
+
+        float travelled = 0f;
+        float nextArrow = GuideEndGap;
+        for (int i = 0; i + 1 < route.Count; i++)
+        {
+            Vector3 along = Flat(route[i + 1] - route[i]);
+            float length = along.magnitude;
+            if (length < 0.1f)
             {
                 continue;
             }
-            Vector3 side = new Vector3(along.z, 0f, -along.x).normalized * RailGap;
-            Vector3 middle = (from + to) * 0.5f + Vector3.up * RailHeight;
-            Vector3 size = new Vector3(0.12f, 0.12f, along.magnitude + 0.12f);
-            Vector3 angles = Quaternion.LookRotation(along).eulerAngles;
-            Shapes.Block(PrimitiveType.Cube, "Rail", rails, middle - side, size, railMaterial, angles);
-            Shapes.Block(PrimitiveType.Cube, "Rail", rails, middle + side, size, railMaterial, angles);
+            Vector3 direction = along / length;
+            while (nextArrow <= travelled + length && nextArrow <= total - GuideEndGap)
+            {
+                Vector3 at = route[i] + direction * (nextArrow - travelled);
+                PaintArrow(at, direction, material, parent);
+                nextArrow += GuideSpacing;
+            }
+            travelled += length;
         }
+    }
+
+    // One ">" pointing along direction: two thin flat bars meeting at the tip.
+    private static void PaintArrow(Vector3 tip, Vector3 direction, Material material, Transform parent)
+    {
+        float yaw = Quaternion.LookRotation(direction).eulerAngles.y;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            float armYaw = yaw + 180f + side * GuideArmAngle; // the arm reaches back from the tip
+            Vector3 back = Quaternion.Euler(0f, armYaw, 0f) * Vector3.forward;
+            Vector3 middle = tip + back * (GuideArmLength * 0.5f) + Vector3.up * GuideHeight;
+            GameObject arm = Shapes.Block(PrimitiveType.Cube, "Route arrow", parent, middle,
+                new Vector3(GuideArmWidth, 0.01f, GuideArmLength), material, new Vector3(0f, armYaw, 0f));
+            arm.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        }
+    }
+
+    private static Vector3 Flat(Vector3 vector)
+    {
+        vector.y = 0f;
+        return vector;
     }
 
     // Only drawn in the Editor's Scene view, never in the game: the whole run

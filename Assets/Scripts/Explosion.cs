@@ -196,7 +196,7 @@ public class Explosion : MonoBehaviour
         Camera view = Camera.main;
         if (view != null)
         {
-            float distance = Vector3.Distance(view.transform.position, center);
+            float distance = Vector3.Distance(CameraDirector.PlayerEye, center);
             float strength = Mathf.Clamp01(radius / 6f) * Mathf.Clamp01(1f - distance / 45f);
             CameraDirector.Shake(0.2f + 0.5f * strength);
         }

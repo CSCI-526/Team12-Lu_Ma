@@ -17,9 +17,17 @@
 //     the field of view widens (wideFieldOfView), so more of the fight is seen.
 //   - on the Start panel and the results screens the view drifts slowly
 //     left and right, so the scene behind the panel feels alive.
+//   - MAP VIEW (waves 2 and 4, see WaveSpawner.mapViewWaves): once the player
+//     stops at such a fight, the camera rises out of the head, pulls back and
+//     tilts down until it sees the WHOLE area: every spawn point and its
+//     exit, barrels, crates and every zombie. The player's green body (only
+//     shown in this view) sits at the bottom centre of the screen. When the
+//     ride to the next fight starts, it glides back into the eyes.
 //
-// Any script can call the two static methods above. They do nothing if
-// there is no CameraDirector in the scene.
+// Any script can call the static methods (Shake, Kick). They do nothing if
+// there is no CameraDirector in the scene. Gameplay that needs "where the
+// player is" uses PlayerEye / ShotOrigin, never the camera's position,
+// because in the map view the camera is high above the player.
 //
 // Everything happens in LateUpdate, after every Update has moved the rig and
 // the enemies. DefaultExecutionOrder(-100) makes it run BEFORE the other
@@ -75,6 +83,16 @@ public class CameraDirector : MonoBehaviour
     [SerializeField] private float breathingDegrees = 0.25f;  // tiny sway that never stops
     [SerializeField] private float breathingFrequency = 0.25f; // breaths per second
 
+    [Header("Map view (waves 2 and 4)")]
+    [SerializeField] private float viewSwitchSeconds = 1.6f;      // time to glide between first person and the map view
+    [SerializeField] private float mapPitch = 48f;                // degrees the map view looks down (90 = straight down)
+    [SerializeField] private float mapFieldOfView = 55f;
+    [SerializeField] private float mapPlayerScreenHeight = 0.14f; // where the player sits on screen: 0 = bottom edge, 1 = top edge
+    [SerializeField] private float mapScreenMargin = 0.06f;       // keep the area this far inside the screen edges (fraction of the screen)
+    [SerializeField] private float mapMinDistance = 12f;          // metres from the camera to the player, at least...
+    [SerializeField] private float mapMaxDistance = 120f;         // ...and at most
+    [SerializeField] private float mapZoomSmoothTime = 0.6f;      // seconds; the zoom follows the zombies softly
+
     // The camera does not draw anything closer than this (metres).
     private const float NearClip = 0.1f;
     // Nothing further away than this is drawn (the whole USC block and the streets around it fit).
@@ -110,6 +128,52 @@ public class CameraDirector : MonoBehaviour
     private float fieldOfView;           // the field of view now (glides between base and wide)
     private float fieldOfViewVelocity;
     private float wideTimer;             // seconds the view stays wide after the last word / aim
+
+    // Map view.
+    private float viewBlend;             // 0 = first person, 1 = map view; glides between them
+    private float mapDistance;           // metres from the camera to the player in the map view
+    private float mapDistanceVelocity;
+    private bool mapDistanceValid;       // false until the first map-view frame (then no zoom glide)
+    private GameObject avatar;           // the player's body, only shown in the map view
+    private readonly System.Collections.Generic.List<Vector3> framePoints = new System.Collections.Generic.List<Vector3>();
+
+    // How far the camera is into the map view: 0 = first person, 1 = map view
+    // (WaveSpawner.LayoutLabels draws the words smaller and spreads them out).
+    public static float MapBlend
+    {
+        get { return current != null ? SmoothStep(current.viewBlend) : 0f; }
+    }
+
+    // Where the player's eyes are, whatever the camera is doing. Gameplay aims
+    // here (energy orbs fly at it, blasts shake by distance to it).
+    public static Vector3 PlayerEye
+    {
+        get
+        {
+            if (current != null)
+            {
+                return current.EyePosition();
+            }
+            Camera view = Camera.main;
+            return view != null ? view.transform.position : Vector3.zero;
+        }
+    }
+
+    // Where a shot or a throw starts: cameraLocalOffset from the camera in first
+    // person (just below the view), sliding to the player's chest in the map view.
+    public static Vector3 ShotOrigin(Vector3 cameraLocalOffset)
+    {
+        if (current == null)
+        {
+            return Camera.main.transform.TransformPoint(cameraLocalOffset);
+        }
+        Vector3 fromCamera = current.transform.TransformPoint(cameraLocalOffset);
+        if (current.viewBlend <= 0f)
+        {
+            return fromCamera;
+        }
+        return Vector3.Lerp(fromCamera, current.ChestPosition(), SmoothStep(current.viewBlend));
+    }
 
     // Adds screen shake. trauma: 0..1 (0.2 = a bump, 0.6 = a close explosion, 1 = huge).
     public static void Shake(float trauma)
@@ -150,6 +214,7 @@ public class CameraDirector : MonoBehaviour
         // Found once: both live in the scene from the start.
         typing = Object.FindFirstObjectByType<TypingController>();
         spawner = Object.FindFirstObjectByType<WaveSpawner>();
+        BuildAvatar();
     }
 
     private void OnDestroy()
@@ -233,6 +298,235 @@ public class CameraDirector : MonoBehaviour
         transform.localRotation = Quaternion.Euler(-pitchUp, yaw, roll);
         transform.localPosition = basePosition + Vector3.up * bobHeightNow + transform.localRotation * shakeOffset;
         cam.fieldOfView = UpdateFieldOfView(deltaTime, playing);
+
+        // ---- 5. Map view (waves 2 and 4): blend the first-person view above with it ----
+        UpdateMapView(deltaTime, shakeYaw, shakePitch, shakeRoll);
+    }
+
+    // ---- Map view ----
+
+    private void UpdateMapView(float deltaTime, float shakeYaw, float shakePitch, float shakeRoll)
+    {
+        // Up in a map-view wave once the player has stopped at the fight; back
+        // into the eyes as soon as the ride to the next fight starts. Glides
+        // (and holds still while paused).
+        bool riding = rail != null && rail.IsRiding;
+        bool showMap = spawner != null && spawner.IsMapViewWave && !riding;
+        float speed = 1f / Mathf.Max(0.01f, viewSwitchSeconds);
+        viewBlend = Mathf.MoveTowards(viewBlend, showMap ? 1f : 0f, speed * deltaTime);
+
+        // The body only shows once the camera has left the head (it would block the first-person view).
+        if (avatar != null)
+        {
+            avatar.SetActive(viewBlend > 0.15f);
+        }
+
+        if (viewBlend <= 0f)
+        {
+            mapDistanceValid = false; // next time, start the zoom where it belongs
+            return;                   // pure first person: keep what LateUpdate set
+        }
+
+        // The first-person pose, as LateUpdate just set it, in world space.
+        Vector3 eyePosition = transform.position;
+        Quaternion eyeRotation = transform.rotation;
+
+        Vector3 mapPosition;
+        Quaternion mapRotation;
+        MapPose(deltaTime, out mapPosition, out mapRotation);
+        mapRotation = mapRotation * Quaternion.Euler(-shakePitch, shakeYaw, shakeRoll); // blasts still shake the map
+
+        // Height leads the move: the camera first RISES straight out of the
+        // head, then pulls back and tilts down over the whole area (and on the
+        // way back it stays high until the end, then drops into the eyes).
+        float t = SmoothStep(viewBlend);
+        float rise = 1f - (1f - t) * (1f - t);
+        Vector3 position = Vector3.Lerp(eyePosition, mapPosition, t);
+        position.y = Mathf.Lerp(eyePosition.y, mapPosition.y, rise);
+
+        transform.SetPositionAndRotation(position, Quaternion.Slerp(eyeRotation, mapRotation, t));
+        cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, mapFieldOfView, t);
+    }
+
+    // The map view's camera pose: behind and above the player, facing the way
+    // the player faces (toward the fight), looking down mapPitch degrees. The
+    // player sits at mapPlayerScreenHeight on screen, and the camera stands just
+    // far enough back to fit the whole area of the current encounter.
+    private void MapPose(float deltaTime, out Vector3 position, out Quaternion rotation)
+    {
+        Transform rig = transform.parent != null ? transform.parent : transform;
+        Vector3 anchor = rig.position + Vector3.up; // the middle of the player's body
+        Vector3 facing = rig.forward;
+        facing.y = 0f;
+        if (facing.sqrMagnitude < 0.0001f)
+        {
+            facing = Vector3.forward;
+        }
+        Quaternion heading = Quaternion.LookRotation(facing.normalized);
+        rotation = heading * Quaternion.Euler(mapPitch, 0f, 0f);
+
+        // The player is BELOW the centre of the view: the ray to them points
+        // "below" degrees further down than the view itself.
+        float tanHalf = Mathf.Tan(mapFieldOfView * 0.5f * Mathf.Deg2Rad);
+        float below = Mathf.Atan((0.5f - mapPlayerScreenHeight) * 2f * tanHalf) * Mathf.Rad2Deg;
+        Vector3 towardPlayer = heading * Quaternion.Euler(mapPitch + below, 0f, 0f) * Vector3.forward;
+
+        CollectFramePoints(anchor);
+        float wanted = FitDistance(anchor, rotation, towardPlayer, tanHalf);
+        if (!mapDistanceValid)
+        {
+            mapDistance = wanted;
+            mapDistanceVelocity = 0f;
+            mapDistanceValid = true;
+        }
+        else if (deltaTime > 0f)
+        {
+            mapDistance = Mathf.SmoothDamp(mapDistance, wanted, ref mapDistanceVelocity, mapZoomSmoothTime, Mathf.Infinity, deltaTime);
+        }
+
+        position = anchor - towardPlayer * mapDistance;
+    }
+
+    // Everything the map view must show: the player, the fight's stop point,
+    // every spawn point and its exit (where enemies come from), the barrels,
+    // the crates, and every zombie.
+    private void CollectFramePoints(Vector3 anchor)
+    {
+        framePoints.Clear();
+        framePoints.Add(anchor);
+        if (spawner == null)
+        {
+            return;
+        }
+
+        Encounter encounter = spawner.CurrentEncounter;
+        if (encounter != null)
+        {
+            if (encounter.Route.Count > 0)
+            {
+                framePoints.Add(encounter.Route[encounter.Route.Count - 1]);
+            }
+            foreach (SpawnPoint point in encounter.SpawnPoints)
+            {
+                if (point != null)
+                {
+                    framePoints.Add(point.Position);
+                    framePoints.Add(point.Exit);
+                }
+            }
+            foreach (Barrel barrel in encounter.Barrels)
+            {
+                if (barrel != null)
+                {
+                    framePoints.Add(barrel.transform.position);
+                }
+            }
+            foreach (SupplyCrate crate in encounter.Crates)
+            {
+                if (crate != null)
+                {
+                    framePoints.Add(crate.transform.position);
+                }
+            }
+        }
+
+        foreach (Zombie zombie in spawner.AliveZombies)
+        {
+            if (zombie != null && zombie.IsAlive)
+            {
+                framePoints.Add(zombie.HitPoint);
+            }
+        }
+    }
+
+    // The shortest camera-to-player distance (between mapMinDistance and
+    // mapMaxDistance) at which every frame point is on screen, inside the margin.
+    // Moving back only brings points closer to the player on screen, so a
+    // binary search finds it.
+    private float FitDistance(Vector3 anchor, Quaternion rotation, Vector3 towardPlayer, float tanHalf)
+    {
+        if (!FitsAt(mapMaxDistance, anchor, rotation, towardPlayer, tanHalf))
+        {
+            return mapMaxDistance; // too big to fit: show as much as we can
+        }
+
+        float low = mapMinDistance;
+        float high = mapMaxDistance;
+        for (int step = 0; step < 20; step++)
+        {
+            float middle = (low + high) * 0.5f;
+            if (FitsAt(middle, anchor, rotation, towardPlayer, tanHalf))
+            {
+                high = middle;
+            }
+            else
+            {
+                low = middle;
+            }
+        }
+        return high;
+    }
+
+    // Would every frame point be on screen with the camera 'distance' metres from the player?
+    private bool FitsAt(float distance, Vector3 anchor, Quaternion rotation, Vector3 towardPlayer, float tanHalf)
+    {
+        Vector3 cameraPosition = anchor - towardPlayer * distance;
+        Quaternion toCamera = Quaternion.Inverse(rotation);
+        float limit = 1f - 2f * mapScreenMargin; // -1..1 is the whole screen
+        float aspect = cam.aspect;
+
+        foreach (Vector3 point in framePoints)
+        {
+            Vector3 local = toCamera * (point - cameraPosition); // x right, y up, z forward
+            if (local.z < 0.5f)
+            {
+                return false; // behind (or right at) the camera
+            }
+            float x = local.x / (local.z * tanHalf * aspect);
+            float y = local.y / (local.z * tanHalf);
+            if (Mathf.Abs(x) > limit || Mathf.Abs(y) > limit)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The player's body, only shown in the map view: a green capsule the same
+    // shape and size as a zombie's (so it reads as "a person"), a nose that
+    // points where the player faces, and a flat green disc on the ground.
+    // Green: no enemy or prop uses it.
+    private void BuildAvatar()
+    {
+        if (transform.parent == null)
+        {
+            return;
+        }
+
+        avatar = new GameObject("PlayerAvatar");
+        avatar.transform.SetParent(transform.parent, false);
+        Material body = Palette.Lit(PlayerGreen);
+        Shapes.Block(PrimitiveType.Capsule, "Body", avatar.transform, new Vector3(0f, 1f, 0f), Vector3.one, body);
+        Shapes.Block(PrimitiveType.Cube, "Nose", avatar.transform, new Vector3(0f, 1.4f, 0.55f), new Vector3(0.3f, 0.3f, 0.5f), body);
+        GameObject disc = Shapes.Block(PrimitiveType.Cylinder, "Disc", avatar.transform, new Vector3(0f, 0.03f, 0f),
+            new Vector3(2.2f, 0.01f, 2.2f), Palette.Unlit(PlayerGreen));
+        disc.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        avatar.SetActive(false);
+    }
+
+    private static readonly Color PlayerGreen = new Color(0.20f, 0.95f, 0.45f);
+
+    // The player's chest, in front of the body: where map-view shots start.
+    private Vector3 ChestPosition()
+    {
+        Transform rig = transform.parent != null ? transform.parent : transform;
+        return rig.position + Vector3.up * 1.3f + rig.forward * 0.5f;
+    }
+
+    // 0..1 -> 0..1, starting and ending gently.
+    private static float SmoothStep(float t)
+    {
+        return t * t * (3f - 2f * t);
     }
 
     // ---- Wide view ----

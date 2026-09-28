@@ -25,11 +25,12 @@
 //     case-sensitive and may contain digits and symbols, which must be typed
 //     exactly. Digits and symbols are ignored while no orb is around.
 //   - A wrong key never resets progress. The screen flashes red and the
-//     combo resets.
+//     combo drops by one.
 //   - 1: TAP to throw a lure bomb, HOLD to aim it (a dashed arc) and release
 //     to throw (see Powers); while aiming, the ARROW keys steer the throw.
 //     1 is read as a key going down / up, not as a typed character.
-//     2 uses the freeze power. No word contains those two keys, and arrow
+//     2 uses the freeze power; 3 buys a FRENZY and 4 an RPG (combo weapons,
+//     see Powers). No word contains the keys 1-4, and arrow
 //     keys type nothing, so they never clash with typing.
 //   - Backspace drops the current target so the player can retarget.
 //   - Escape pauses the game (and resumes it from the pause panel, see
@@ -57,6 +58,8 @@ public class TypingController : MonoBehaviour
 
     private const char LureKey = '1';
     private const char FreezeKey = '2';
+    private const char FrenzyKey = '3';  // combo weapons (see Powers)
+    private const char RocketKey = '4';
 
     // CANDIDATES: every target whose word matches everything typed so far.
     // Usually one (first letters on screen are kept different), but word
@@ -155,6 +158,12 @@ public class TypingController : MonoBehaviour
         }
 
         // ---- 3. Outside of play, only Enter does something ----
+        // (except on the leaderboard page, where the player types a name)
+        if (GameManager.Instance.State == GameState.Scores)
+        {
+            GameManager.Instance.OnLeaderboardInput(typedText, dropPressed, enterPressed);
+            return;
+        }
         if (GameManager.Instance.State != GameState.Playing)
         {
             if (enterPressed)
@@ -213,6 +222,16 @@ public class TypingController : MonoBehaviour
             if (character == FreezeKey)
             {
                 GameManager.Instance.Powers.TryUseFreeze();
+                continue;
+            }
+            if (character == FrenzyKey)
+            {
+                GameManager.Instance.Powers.WeaponKey(false); // buy a FRENZY, or use the one kept
+                continue;
+            }
+            if (character == RocketKey)
+            {
+                GameManager.Instance.Powers.WeaponKey(true);  // buy an RPG, or use the one kept
                 continue;
             }
 
@@ -328,7 +347,7 @@ public class TypingController : MonoBehaviour
         }
         if (scratch.Count == 0)
         {
-            WrongKey(); // matches none of them: nothing changes, the combo resets
+            WrongKey(); // matches none of them: nothing changes, the combo drops by one
             return;
         }
 
@@ -342,22 +361,47 @@ public class TypingController : MonoBehaviour
         }
         candidates.Clear();
         candidates.AddRange(scratch);
+        GameManager.Instance.OnCorrectKey();
+        AdvanceCandidates();
 
+        if (candidates.Count == 0)
+        {
+            EndRun();
+        }
+    }
+
+    // Drops the word being typed, as Backspace does (its letters go back to
+    // white). Called by Powers when a FRENZY swaps every enemy's word.
+    public void DropWord()
+    {
+        foreach (ITypingTarget candidate in candidates)
+        {
+            candidate.ResetProgress();
+        }
+        candidates.Clear();
+        EndRun();
+    }
+
+    // Types one letter into every candidate: a shot at the nearest one, or the
+    // killing shot at each word this letter finishes.
+    private void AdvanceCandidates()
+    {
         foreach (ITypingTarget candidate in candidates)
         {
             candidate.AdvanceProgress();
         }
-        GameManager.Instance.OnCorrectKey();
 
-        // Every word finished by this key gets its killing shot (with "hunt" and
-        // "hunter", the T finishes "hunt" and "hunter" stays a candidate).
+        // Every word finished by this letter gets its killing shot (with "hunt"
+        // and "hunter", the T finishes "hunt" and "hunter" stays a candidate).
+        // A loaded RPG turns the first of those shots into a rocket.
         bool anyFinished = false;
         ITypingTarget lastFinished = null;
         foreach (ITypingTarget candidate in candidates)
         {
             if (candidate.IsWordComplete)
             {
-                Bullet.Fire(candidate, true);
+                bool rocket = GameManager.Instance.Powers.ConsumeRocket();
+                Bullet.Fire(candidate, true, rocket);
                 wordsFinished += 1;
                 anyFinished = true;
                 lastFinished = candidate;
@@ -378,12 +422,8 @@ public class TypingController : MonoBehaviour
         {
             Bullet.Fire(nearest, false);
         }
-
-        if (candidates.Count == 0)
-        {
-            EndRun();
-        }
     }
+
 
     // A run of typing is over (every candidate finished, dropped or gone). If
     // it finished 2 or more words (hunt, then hunter), it was a WORD CHAIN.

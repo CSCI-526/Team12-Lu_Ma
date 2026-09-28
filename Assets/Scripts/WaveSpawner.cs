@@ -56,6 +56,9 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private int armoredStartCount = 2;
     [SerializeField] private int armoredPerWave = 1;
 
+    [Header("Map view")]
+    [SerializeField] private int[] mapViewWaves = { 2, 4 };     // in these waves the camera rises to a view over the whole area (CameraDirector)
+
     [Header("Word chains")]
     [SerializeField] private int chainFirstWave = 2;            // no WORD CHAIN pairs (hunt + hunter) before this wave
     [SerializeField] private int chainStartCount = 1;           // pairs in chainFirstWave
@@ -71,7 +74,8 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private Level level;
 
     private const float MinSpawnInterval = 0.8f; // the spawn interval never goes below this
-    private const float PackStagger = 0.35f;     // seconds between the zombies of one pack
+    private const float PackStagger = 0.6f;      // seconds between the zombies of one pack
+    private const float PackLaneWidth = 1.4f;    // metres between the lanes of a pack's zombies (side by side)
     private const float BannerSeconds = 2f;      // how long the "Wave N" banner stays up
     private const float GateSeconds = 1.5f;      // time for a gate to open before the ride goes on
 
@@ -96,6 +100,18 @@ public class WaveSpawner : MonoBehaviour
     public Boss CurrentBoss
     {
         get { return boss; }
+    }
+
+    // The encounter being ridden to or fought (null before the level starts),
+    // and its wave number (1 = the first).
+    public Encounter CurrentEncounter { get; private set; }
+    public int CurrentWave { get; private set; }
+
+    // True in the waves listed in mapViewWaves: once the player stops there,
+    // the camera rises to show the whole area (see CameraDirector).
+    public bool IsMapViewWave
+    {
+        get { return CurrentEncounter != null && System.Array.IndexOf(mapViewWaves, CurrentWave) >= 0; }
     }
 
     // Used by zombies, barrels... to create their word.
@@ -145,8 +161,8 @@ public class WaveSpawner : MonoBehaviour
         return used;
     }
 
-    // Awake (not Start): after a Restart, GameManager.Start begins the waves at once,
-    // and that may happen before this object's Start. Level lists its fights in its
+    // Awake (not Start): everything must be ready before GameManager can begin the waves,
+    // which may happen before this object's Start. Level lists its fights in its
     // own Awake, which runs before this one (see Level's DefaultExecutionOrder).
     private void Awake()
     {
@@ -206,14 +222,15 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private float labelGap = 4f;                // empty space (HUD units) between stacked words
     [SerializeField] private float labelSlideSharpness = 14f;    // higher = pushed words slide into place faster
     [SerializeField] private float labelEdgeMargin = 110f;       // HUD units: words always stay this far inside the screen edges
+    private const float MapLabelScale = 0.7f;                    // in the map view (waves 2 and 4) words are drawn this much smaller
 
     private readonly List<ITypingTarget> labelOrder = new List<ITypingTarget>();
     private readonly List<Rect> placedLabels = new List<Rect>();
 
     // How far each word is currently pushed up. A word not in here yet (just
     // spawned) jumps straight to its spot instead of sliding in from elsewhere.
-    private Dictionary<TMP_Text, float> labelLifts = new Dictionary<TMP_Text, float>();
-    private Dictionary<TMP_Text, float> nextLabelLifts = new Dictionary<TMP_Text, float>();
+    private Dictionary<TMP_Text, Vector2> labelLifts = new Dictionary<TMP_Text, Vector2>();
+    private Dictionary<TMP_Text, Vector2> nextLabelLifts = new Dictionary<TMP_Text, Vector2>();
 
 
     private void LayoutLabels()
@@ -263,6 +280,12 @@ public class WaveSpawner : MonoBehaviour
 
             // Size: fit the box to the text, then scale with distance.
             float scale = Mathf.Clamp(labelReferenceDistance / screenPoint.z, labelMinScale, labelMaxScale);
+            if (target is Zombie || target is BossPart)
+            {
+                scale *= Powers.LabelBoost; // enemy words are bigger during a FRENZY
+            }
+            float mapBlend = CameraDirector.MapBlend;
+            scale *= Mathf.Lerp(1f, MapLabelScale, mapBlend); // seen from high up, words are smaller
             Vector2 textSize = new Vector2(label.preferredWidth, label.preferredHeight);
             labelRect.sizeDelta = textSize;
             labelRect.localScale = new Vector3(scale, scale, 1f);
@@ -272,31 +295,18 @@ public class WaveSpawner : MonoBehaviour
             Vector2 size = textSize * scale;
             anchor = KeepOnScreen(anchor, size, labelRect.pivot, layer.rect);
             Rect baseRect = new Rect(anchor - Vector2.Scale(size, labelRect.pivot), size);
-            Rect rect = baseRect;
-            bool moved = true;
-            while (moved)
-            {
-                moved = false;
-                foreach (Rect placed in placedLabels)
-                {
-                    if (rect.Overlaps(placed))
-                    {
-                        rect.y = placed.yMax + labelGap;
-                        moved = true;
-                    }
-                }
-            }
-            // Never push a word off the top of the screen. In a big pile-up the
-            // extra words all stop at the top edge and are drawn over each other.
-            rect.y = Mathf.Min(rect.y, layer.rect.yMax - labelEdgeMargin - rect.height);
+            // First person: push the word UP past every word already placed.
+            // Map view (seen from above, words crowd together): move it the
+            // shortest way, in any direction, to a free spot.
+            Rect rect = mapBlend > 0.5f ? SpreadOut(baseRect, layer.rect) : StackUp(baseRect, layer.rect);
             placedLabels.Add(rect);
 
-            // Slide toward the new push (new words jump straight there).
-            float targetLift = rect.y - baseRect.y;
-            float lift;
+            // Slide toward the new spot (new words jump straight there).
+            Vector2 targetLift = rect.position - baseRect.position;
+            Vector2 lift;
             if (labelLifts.TryGetValue(label, out lift))
             {
-                lift = Mathf.Lerp(lift, targetLift, slide);
+                lift = Vector2.Lerp(lift, targetLift, slide);
             }
             else
             {
@@ -304,7 +314,7 @@ public class WaveSpawner : MonoBehaviour
             }
             nextLabelLifts[label] = lift;
 
-            labelRect.anchoredPosition = anchor + Vector2.up * lift;
+            labelRect.anchoredPosition = anchor + lift;
             label.enabled = true;
 
             // The word being typed is drawn on top of all the others.
@@ -315,7 +325,7 @@ public class WaveSpawner : MonoBehaviour
         }
 
         // Keep only the words that still exist.
-        Dictionary<TMP_Text, float> swap = labelLifts;
+        Dictionary<TMP_Text, Vector2> swap = labelLifts;
         labelLifts = nextLabelLifts;
         nextLabelLifts = swap;
     }
@@ -327,6 +337,89 @@ public class WaveSpawner : MonoBehaviour
     // already fits does not move.
     //   anchor = where the word's pivot would be (HUD units, 0,0 = screen middle)
     //   size   = the word's size on screen, pivot = the word's pivot, screen = the word layer
+    // First person: pushes the word up past every word already placed (it only
+    // ever moves up, so this always finishes), but never off the top of the
+    // screen: in a big pile-up the extra words stop at the top edge.
+    private Rect StackUp(Rect rect, Rect screen)
+    {
+        bool moved = true;
+        while (moved)
+        {
+            moved = false;
+            foreach (Rect placed in placedLabels)
+            {
+                if (rect.Overlaps(placed))
+                {
+                    rect.y = placed.yMax + labelGap;
+                    moved = true;
+                }
+            }
+        }
+        rect.y = Mathf.Min(rect.y, screen.yMax - labelEdgeMargin - rect.height);
+        return rect;
+    }
+
+    // Map view: the word already fits -> it stays. Otherwise try every spot just
+    // above, below, left or right of each word in the way, and take the free
+    // one (no overlap, on screen) closest to where the word wants to be.
+    // Sideways moves count a little more, so words prefer to move up / down.
+    // If no single move frees it, fall back to stacking it up.
+    private Rect SpreadOut(Rect rect, Rect screen)
+    {
+        if (!OverlapsPlaced(rect))
+        {
+            return rect;
+        }
+
+        Rect inside = new Rect(screen.xMin + 10f, screen.yMin + 10f, screen.width - 20f, screen.height - 20f);
+        Rect best = rect;
+        float bestCost = float.MaxValue;
+        foreach (Rect placed in placedLabels)
+        {
+            TrySpot(new Rect(rect.x, placed.yMax + labelGap, rect.width, rect.height), rect, inside, ref best, ref bestCost);
+            TrySpot(new Rect(rect.x, placed.yMin - rect.height - labelGap, rect.width, rect.height), rect, inside, ref best, ref bestCost);
+            TrySpot(new Rect(placed.xMin - rect.width - labelGap, rect.y, rect.width, rect.height), rect, inside, ref best, ref bestCost);
+            TrySpot(new Rect(placed.xMax + labelGap, rect.y, rect.width, rect.height), rect, inside, ref best, ref bestCost);
+        }
+
+        if (bestCost < float.MaxValue)
+        {
+            return best;
+        }
+        return StackUp(rect, screen);
+    }
+
+    private void TrySpot(Rect spot, Rect wanted, Rect inside, ref Rect best, ref float bestCost)
+    {
+        if (spot.xMin < inside.xMin || spot.xMax > inside.xMax || spot.yMin < inside.yMin || spot.yMax > inside.yMax)
+        {
+            return; // off screen
+        }
+        if (OverlapsPlaced(spot))
+        {
+            return;
+        }
+        Vector2 move = spot.position - wanted.position;
+        float cost = Mathf.Abs(move.x) * 1.2f + Mathf.Abs(move.y);
+        if (cost < bestCost)
+        {
+            bestCost = cost;
+            best = spot;
+        }
+    }
+
+    private bool OverlapsPlaced(Rect rect)
+    {
+        foreach (Rect placed in placedLabels)
+        {
+            if (rect.Overlaps(placed))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private Vector2 KeepOnScreen(Vector2 anchor, Vector2 size, Vector2 pivot, Rect screen)
     {
         // The middle of the word's box.
@@ -385,6 +478,8 @@ public class WaveSpawner : MonoBehaviour
         {
             Encounter encounter = level.Encounters[index];
             int wave = index + 1;
+            CurrentEncounter = encounter;
+            CurrentWave = wave;
             hud.SetWave(wave, count);
 
             // 1. Ride to the fight.
@@ -398,6 +493,7 @@ public class WaveSpawner : MonoBehaviour
             hud.ShowBanner(encounter.IsBossFight ? "BOSS FIGHT" : "Wave " + wave);
             yield return new WaitForSeconds(BannerSeconds);
             hud.HideBanner();
+            GameManager.Instance.Powers.OnWaveStart(); // a new combo weapon can be bought
             ActivateProps(encounter);
             StartCoroutine(ShowPropHints());
 
@@ -463,7 +559,13 @@ public class WaveSpawner : MonoBehaviour
                 point.Door.BurstOpen();
             }
 
+            // A pack of 3 or more does not all come out of one door: its last
+            // zombie comes from a door on the OTHER side of the player's view
+            // (so a pack from the right sends one from the left, and back).
+            SpawnPoint otherSide = pack >= 3 ? OtherSidePoint(point, order, encounter) : null;
+
             int packLeft = pack;
+            int member = 0;
             while (packLeft > 0 && spawned < zombiesThisWave)
             {
                 // A WORD CHAIN pair takes two places of the plan and comes out together.
@@ -474,10 +576,27 @@ public class WaveSpawner : MonoBehaviour
                 }
                 else
                 {
-                    SpawnZombie(point, plan[spawned], speed);
+                    bool last = packLeft == 1;
+                    if (last && otherSide != null)
+                    {
+                        if (otherSide.Door != null)
+                        {
+                            otherSide.Door.BurstOpen();
+                        }
+                        SpawnZombie(otherSide, plan[spawned], speed);
+                    }
+                    else
+                    {
+                        // Side by side, not in one spot: each member of the pack
+                        // gets its own lane across the doorway.
+                        int atThisDoor = otherSide != null ? pack - 1 : pack;
+                        float lane = (member - (atThisDoor - 1) * 0.5f) * PackLaneWidth;
+                        SpawnZombieInLane(point, plan[spawned], speed, lane);
+                    }
                     spawned += 1;
                     packLeft -= 1;
                 }
+                member += 1;
                 if (packLeft > 0)
                 {
                     yield return new WaitForSeconds(PackStagger);
@@ -648,6 +767,37 @@ public class WaveSpawner : MonoBehaviour
         return SpawnZombieAt(point.Position, point.Exit, point.Spread, kind, speed, forcedWord);
     }
 
+    // Like SpawnZombie, but 'lane' metres to the side of the door (across the
+    // way the zombie walks out), so the zombies of a pack walk side by side.
+    private Zombie SpawnZombieInLane(SpawnPoint point, ZombieKind kind, float speed, float lane)
+    {
+        Vector3 walk = point.Exit - point.Position;
+        walk.y = 0f;
+        Vector3 across = walk.sqrMagnitude > 0.001f ? new Vector3(walk.z, 0f, -walk.x).normalized : Vector3.right;
+        Vector3 shift = across * lane;
+        return SpawnZombieAt(point.Position + shift * 0.5f, point.Exit + shift, point.Spread * 0.5f, kind, speed);
+    }
+
+    // A spawn point on the other side of the player's view (left / right of the
+    // direction faced at the stop) from 'point', or null if there is none.
+    private static SpawnPoint OtherSidePoint(SpawnPoint point, List<SpawnPoint> points, Encounter encounter)
+    {
+        Vector3 facing = encounter.Facing;
+        Vector3 right = new Vector3(facing.z, 0f, -facing.x);
+        float side = Vector3.Dot(point.Exit - encounter.StopPosition, right);
+
+        List<SpawnPoint> others = new List<SpawnPoint>();
+        foreach (SpawnPoint candidate in points)
+        {
+            float candidateSide = Vector3.Dot(candidate.Exit - encounter.StopPosition, right);
+            if (candidate != point && candidateSide * side < 0f)
+            {
+                others.Add(candidate);
+            }
+        }
+        return others.Count > 0 ? others[Random.Range(0, others.Count)] : null;
+    }
+
     // The same, from any spot: the zombie appears at spawnAt (plus a random
     // offset up to spread metres), walks to exitAt, then at the player.
     private Zombie SpawnZombieAt(Vector3 spawnAt, Vector3 exitAt, float spread, ZombieKind kind, float speed, string forcedWord = null)
@@ -676,6 +826,12 @@ public class WaveSpawner : MonoBehaviour
         Zombie zombie = Instantiate(zombiePrefab, position, rotation);
         zombie.Setup(word, speed, player, this, kind, exit);
         aliveZombies.Add(zombie);
+
+        // Born during a FRENZY: a short word right away (its real word comes back with the others).
+        if (Powers.IsFrenzy)
+        {
+            zombie.EnterFrenzy(WordBank.PickFrenzyWord(UsedFirstLetters()));
+        }
 
         // The first time each special kind shows up, say what it does.
         if (kind == ZombieKind.Explosive)

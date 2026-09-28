@@ -12,15 +12,28 @@
 //   [2] FREEZE    - every zombie, energy orb and the boss stop for
 //       freezeSeconds. You keep typing. While frozen, IsFrozen is true.
 //
-// Charges (max maxCharges of each) come from supply crates in the level and
-// from the COMBO: every killsPerReward kills in a row without a mistake earn a
-// charge, alternating lure bomb, freeze, lure bomb, ... A wrong key or getting
-// hurt resets the combo, so accurate typing is what earns powers.
+// Charges (max maxCharges of each) come ONLY from supply crates in the level.
+//
+// COMBO WEAPONS: the combo (kills in a row without a mistake) buys them.
+// Pressing the key BUYS the weapon when the combo is high enough: the combo is
+// spent and the weapon is KEPT in a slot (bottom-left, with an icon) until the
+// player wants it. Otherwise the key (or a click on the slot) USES a kept one:
+//   [3] FRENZY - costs FrenzyCost combo: for frenzySeconds every enemy word
+//       becomes a TINY word (1 to 4 letters, random) in a vivid colour, drawn bigger;
+//       the real words come back when it ends. (Skull icon.)
+//   [4] RPG    - costs RocketCost combo: the next word the player finishes is
+//       shot with a rocket that explodes around its target (Bullet, Explosion).
+//       (Rocket icon.)
+//   Two of each can be kept (MaxKept); one weapon can be BOUGHT per wave
+//   (oneWeaponPerWave). The line under the big COMBO on the HUD shows what the
+//   combo can buy.
 //
 // Lives on the GameManager object. TypingController calls BeginLureAim (1 down),
-// ReleaseLureAim (1 up) and TryUseFreeze; GameManager calls OnComboChanged
-// every time the combo changes.
+// ReleaseLureAim (1 up), TryUseFreeze and WeaponKey (3 / 4); the HUD calls
+// UseWeapon when a weapon slot is clicked; GameManager calls OnComboChanged
+// every time the combo changes, WaveSpawner OnWaveStart.
 // ---------------------------------------------------------------------------
+using System.Collections.Generic;
 using UnityEngine;
 
 public enum PowerKind
@@ -33,7 +46,16 @@ public class Powers : MonoBehaviour
 {
     [Header("Charges")]
     [SerializeField] private int maxCharges = 3;
-    [SerializeField] private int killsPerReward = 5;      // a combo of this many kills earns a charge
+
+    // Combo weapon costs. Constants on purpose: a value shown in the Inspector
+    // is saved with the scene (and kept by the open Editor), so a new default
+    // in the code would never reach it. Change them here.
+    public const int FrenzyCost = 10;                     // combo spent on a frenzy [3]
+    public const int RocketCost = 15;                     // combo spent on one RPG shot [4]
+
+    [Header("Combo weapons")]
+    [SerializeField] private float frenzySeconds = 5f;    // enemy words are short this long
+    [SerializeField] private bool oneWeaponPerWave = true;
 
     [Header("Lure bomb")]
     [SerializeField] private float throwDistance = 9f;    // metres ahead of the player (a quick tap)
@@ -60,6 +82,28 @@ public class Powers : MonoBehaviour
         get { return freezeTimeLeft > 0f; }
     }
 
+    // Combo weapons. Static like the freeze (reset in Awake).
+    private static float frenzyTimeLeft;
+
+    // True during a FRENZY: every enemy word is short.
+    public static bool IsFrenzy
+    {
+        get { return frenzyTimeLeft > 0f; }
+    }
+
+    // True once a kept RPG is used (loaded) and not fired yet.
+    public bool RocketLoaded { get; private set; }
+
+    // Combo weapons bought and kept for later (MaxKept of each at most), shown
+    // bottom-left with their icons; the key (or a click) uses them.
+    public const int MaxKept = 2;         // slots per weapon
+    public int FrenzyKept { get; private set; }
+    public int RocketKept { get; private set; }
+
+    private int combo = 1;               // the combo now (GameManager tells us)
+    private bool weaponBoughtThisWave;
+    private string lastWeaponStatus;     // what the HUD shows now, so it is only rebuilt when it changes
+
     public int LureCharges { get; private set; }
     public int FreezeCharges { get; private set; }
 
@@ -79,17 +123,30 @@ public class Powers : MonoBehaviour
     private void Awake()
     {
         freezeTimeLeft = 0f;
+        frenzyTimeLeft = 0f;
     }
 
     private void Start()
     {
         RefreshHud();
+        RefreshWeaponSlots();
         OnComboChanged(1);
     }
 
     private void Update()
     {
         UpdateAim();
+
+        if (GameManager.Instance.State == GameState.Playing && frenzyTimeLeft > 0f)
+        {
+            frenzyTimeLeft = Mathf.Max(0f, frenzyTimeLeft - Time.deltaTime);
+            if (frenzyTimeLeft <= 0f)
+            {
+                RestoreRealWords();
+                hud.ShowHint("Frenzy over.", 1.5f);
+            }
+        }
+        RefreshWeaponStatus();
 
         if (freezeTimeLeft <= 0f || GameManager.Instance.State != GameState.Playing)
         {
@@ -157,30 +214,310 @@ public class Powers : MonoBehaviour
             + "Keep typing while they cannot move!";
     }
 
-    // Called by GameManager whenever the combo changes (up by one per kill, or back to 1).
-    // Combo 1 = no kills in a row yet, so the streak length is combo - 1.
-    public void OnComboChanged(int combo)
+    // Called by GameManager whenever the combo changes (up by one per kill, back
+    // to 1 on a mistake, down when spent on a weapon).
+    public void OnComboChanged(int newCombo)
     {
-        int streak = combo - 1;
-
-        // Just reached a multiple of killsPerReward: reward number n (1, 2, 3...).
-        if (streak > 0 && streak % killsPerReward == 0)
-        {
-            AddCharge(RewardKind(streak / killsPerReward));
-        }
-
-        // Tell the HUD what the next reward is and how far away it is.
-        int nextReward = streak / killsPerReward + 1;
-        int killsToGo = killsPerReward - streak % killsPerReward;
-        float progress = (float)(streak % killsPerReward) / killsPerReward;
-        string rewardName = RewardKind(nextReward) == PowerKind.Lure ? "LURE BOMB" : "FREEZE";
-        hud.SetComboReward(rewardName, killsToGo, progress);
+        combo = newCombo;
+        RefreshWeaponStatus();
     }
 
-    // Rewards alternate: 1st = lure bomb, 2nd = freeze, 3rd = lure bomb, ...
-    private static PowerKind RewardKind(int rewardNumber)
+    // Called by WaveSpawner when a fight starts: a new weapon can be bought.
+    public void OnWaveStart()
     {
-        return rewardNumber % 2 == 1 ? PowerKind.Lure : PowerKind.Freeze;
+        weaponBoughtThisWave = false;
+        RefreshWeaponStatus();
+    }
+
+    // ---- Combo weapons (called by TypingController) ----
+
+    // Key 3 (rocket = false) or key 4 (rocket = true): BUYS a weapon when one
+    // can be bought right now (enough combo, none bought this wave, a free
+    // slot); otherwise USES a kept one. (A click on the slot always uses.)
+    public void WeaponKey(bool rocket)
+    {
+        int cost = rocket ? RocketCost : FrenzyCost;
+        bool canBuy = combo >= cost && !(oneWeaponPerWave && weaponBoughtThisWave) && Kept(rocket) < MaxKept;
+        if (canBuy || Kept(rocket) == 0)
+        {
+            BuyWeapon(rocket); // (explains why not when it cannot)
+        }
+        else
+        {
+            UseWeapon(rocket);
+        }
+    }
+
+    private int Kept(bool rocket)
+    {
+        return rocket ? RocketKept : FrenzyKept;
+    }
+
+    // Spends the combo on a weapon and keeps it in a free slot (bottom-left).
+    private void BuyWeapon(bool rocket)
+    {
+        int cost = rocket ? RocketCost : FrenzyCost;
+        string weaponName = rocket ? "RPG" : "FRENZY";
+        if (Kept(rocket) >= MaxKept)
+        {
+            hud.ShowHint("Your " + weaponName + " slots are full: use one first.", 2f);
+            return;
+        }
+        if (!CanBuyWeapon(cost, weaponName))
+        {
+            return;
+        }
+        GameManager.Instance.SpendCombo(cost);
+        weaponBoughtThisWave = true;
+        if (rocket)
+        {
+            RocketKept += 1;
+        }
+        else
+        {
+            FrenzyKept += 1;
+        }
+        RefreshWeaponSlots();
+        hud.PulseWeapon(rocket);
+        hud.ShowWeaponGain(rocket);
+        hud.ShowBigMessage("GOT " + weaponName + "!",
+            "kept bottom-left - press " + (rocket ? "4" : "3") + " (or click it) when you want to use it");
+        RefreshWeaponStatus();
+    }
+
+    // Uses a kept weapon (key 3 / 4, or a click on its slot).
+    public void UseWeapon(bool rocket)
+    {
+        if (Kept(rocket) <= 0)
+        {
+            hud.ShowHint("No " + (rocket ? "RPG" : "FRENZY") + " kept. Press " + (rocket ? "4" : "3")
+                + " to buy one with your combo.", 2.5f);
+            return;
+        }
+        if (rocket)
+        {
+            if (RocketLoaded)
+            {
+                hud.ShowHint("The RPG is already loaded: finish a word to fire it.", 2f);
+                return;
+            }
+            RocketKept -= 1;
+            RocketLoaded = true;
+            hud.ShowBigMessage("RPG LOADED!", "finish a word to fire the rocket");
+        }
+        else
+        {
+            if (IsFrenzy)
+            {
+                hud.ShowHint("A frenzy is already on.", 2f);
+                return;
+            }
+            FrenzyKept -= 1;
+            StartFrenzy();
+        }
+        RefreshWeaponSlots();
+        hud.PulseWeapon(rocket);
+        RefreshWeaponStatus();
+    }
+
+    // FRENZY: every enemy word is short for frenzySeconds.
+    private void StartFrenzy()
+    {
+        frenzyTimeLeft = frenzySeconds;
+        frenzyDuration = frenzySeconds;
+        GiveShortWords();
+        hud.ShowBigMessage("FRENZY!", "every enemy word is SHORT for " + frenzySeconds.ToString("0.#") + "s");
+        CameraDirector.Shake(0.25f);
+    }
+
+    private void RefreshWeaponSlots()
+    {
+        hud.SetWeapons(FrenzyKept, RocketKept);
+    }
+
+    // ---- FRENZY: short words ----
+
+    private const float FrenzyLabelScale = 1.3f; // enemy words are drawn this much bigger during a frenzy
+    private const float FrenzyLabelPop = 0.6f;   // ...and pop even bigger for a moment when it starts
+    private static float frenzyDuration = 1f;
+
+    // How much bigger enemy words are drawn right now (WaveSpawner.LayoutLabels):
+    // 1 normally; during a frenzy FrenzyLabelScale, after a quick pop at its start.
+    public static float LabelBoost
+    {
+        get
+        {
+            if (!IsFrenzy)
+            {
+                return 1f;
+            }
+            float since = frenzyDuration - frenzyTimeLeft;
+            return FrenzyLabelScale * (1f + FrenzyLabelPop * Mathf.Exp(-since * 6f));
+        }
+    }
+
+    // Every enemy (zombies and the boss's words) gets a short word (4 letters
+    // at most); barrels, crates, orbs and quiz answers keep theirs. The word
+    // being typed is dropped first (it is about to change).
+    private void GiveShortWords()
+    {
+        WaveSpawner spawner = Object.FindFirstObjectByType<WaveSpawner>();
+        DropTypedWord();
+        if (spawner == null)
+        {
+            return;
+        }
+
+        // First letters the new words must avoid: everything that keeps its word.
+        List<char> used = new List<char>();
+        foreach (ITypingTarget target in spawner.GetTypingTargets())
+        {
+            if (!(target is Zombie) && !(target is BossPart))
+            {
+                used.Add(char.ToUpperInvariant(target.Word[0]));
+            }
+        }
+
+        foreach (Zombie zombie in spawner.AliveZombies)
+        {
+            if (zombie != null && zombie.IsAlive)
+            {
+                string shortWord = WordBank.PickFrenzyWord(used);
+                used.Add(shortWord[0]);
+                zombie.EnterFrenzy(shortWord);
+            }
+        }
+        if (spawner.CurrentBoss != null && spawner.CurrentBoss.IsAlive)
+        {
+            spawner.CurrentBoss.EnterFrenzy(used);
+        }
+    }
+
+    // The frenzy is over: every enemy gets its real word back.
+    private void RestoreRealWords()
+    {
+        WaveSpawner spawner = Object.FindFirstObjectByType<WaveSpawner>();
+        DropTypedWord();
+        if (spawner == null)
+        {
+            return;
+        }
+        foreach (Zombie zombie in spawner.AliveZombies)
+        {
+            if (zombie != null)
+            {
+                zombie.ExitFrenzy();
+            }
+        }
+        if (spawner.CurrentBoss != null)
+        {
+            spawner.CurrentBoss.ExitFrenzy();
+        }
+    }
+
+    // Drops the word being typed (its letters go back to white), so no half-typed
+    // word is left pointing at letters that are about to change.
+    private static void DropTypedWord()
+    {
+        TypingController typing = Object.FindFirstObjectByType<TypingController>();
+        if (typing != null)
+        {
+            typing.DropWord();
+        }
+    }
+
+    // Called by TypingController when a word is finished: true (once) if the
+    // RPG is loaded, and that shot becomes the rocket.
+    public bool ConsumeRocket()
+    {
+        if (!RocketLoaded)
+        {
+            return false;
+        }
+        RocketLoaded = false;
+        RefreshWeaponStatus();
+        return true;
+    }
+
+    // Says why a weapon cannot be bought right now (hint), or returns true.
+    private bool CanBuyWeapon(int cost, string weaponName)
+    {
+        if (oneWeaponPerWave && weaponBoughtThisWave)
+        {
+            hud.ShowHint("Only one weapon per wave.", 2f);
+            return false;
+        }
+        if (combo < cost)
+        {
+            hud.ShowHint(weaponName + " needs " + cost + " combo (you have " + combo + ").", 2.5f);
+            return false;
+        }
+        return true;
+    }
+
+    // The line under the big COMBO: the weapon in use, or what the combo can buy.
+    private void RefreshWeaponStatus()
+    {
+        string text;
+        float progress;
+        Color color;
+        Color grey = new Color(0.6f, 0.62f, 0.66f);
+        bool canBuyFrenzy = FrenzyKept < MaxKept;   // MaxKept of each can be kept
+        bool canBuyRocket = RocketKept < MaxKept;
+        if (IsFrenzy)
+        {
+            text = "FRENZY!  " + frenzyTimeLeft.ToString("0.0") + "s";
+            progress = frenzyTimeLeft / Mathf.Max(0.01f, frenzySeconds);
+            color = Palette.WeaponFrenzy;
+        }
+        else if (RocketLoaded)
+        {
+            text = "RPG LOADED - finish a word";
+            progress = 1f;
+            color = Palette.BlastOrange;
+        }
+        else if (oneWeaponPerWave && weaponBoughtThisWave)
+        {
+            text = "Next weapon: next wave";
+            progress = 0f;
+            color = grey;
+        }
+        else if (!canBuyFrenzy && !canBuyRocket)
+        {
+            text = "Weapon slots full - use them!";
+            progress = 1f;
+            color = grey;
+        }
+        else if (canBuyRocket && combo >= RocketCost)
+        {
+            text = canBuyFrenzy ? "Press [3] FRENZY or [4] RPG to get it!" : "Press [4] to get an RPG!";
+            progress = 1f;
+            color = Palette.BlastOrange;
+        }
+        else if (canBuyFrenzy && combo >= FrenzyCost)
+        {
+            text = "Press [3] to get a FRENZY!" + (canBuyRocket ? "   RPG in " + (RocketCost - combo) + " combo" : "");
+            progress = canBuyRocket ? (float)combo / RocketCost : 1f;
+            color = Palette.WeaponFrenzy;
+        }
+        else if (canBuyFrenzy)
+        {
+            text = "FRENZY in " + (FrenzyCost - combo) + " combo";
+            progress = (float)combo / FrenzyCost;
+            color = new Color(0.8f, 0.82f, 0.86f);
+        }
+        else
+        {
+            text = "RPG in " + (RocketCost - combo) + " combo";
+            progress = (float)combo / RocketCost;
+            color = new Color(0.8f, 0.82f, 0.86f);
+        }
+
+        if (text != lastWeaponStatus || IsFrenzy)
+        {
+            lastWeaponStatus = text;
+            hud.SetWeaponStatus(text, progress, color);
+        }
     }
 
     // ---- Using charges (called by TypingController) ----
@@ -190,7 +527,7 @@ public class Powers : MonoBehaviour
     {
         if (LureCharges <= 0)
         {
-            hud.ShowHint("No lure bombs. Earn them with a combo of " + killsPerReward + " kills, or from crates.", 3f);
+            hud.ShowHint("No lure bombs. Find them in supply crates (orange).", 3f);
             return;
         }
 
@@ -267,14 +604,14 @@ public class Powers : MonoBehaviour
     // Where the bomb leaves the hand: just below and right of the camera.
     private static Vector3 Hand()
     {
-        return Camera.main.transform.TransformPoint(new Vector3(0.2f, -0.4f, 0.5f));
+        return CameraDirector.ShotOrigin(new Vector3(0.2f, -0.4f, 0.5f)); // the chest in the map view
     }
 
     public void TryUseFreeze()
     {
         if (FreezeCharges <= 0)
         {
-            hud.ShowHint("No freeze left. Earn one with a combo of " + killsPerReward + " kills, or from crates.", 3f);
+            hud.ShowHint("No freeze left. Find them in supply crates (blue).", 3f);
             return;
         }
 

@@ -106,7 +106,7 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
     // The orb flies at the player's face, a little below the camera.
     private static Vector3 AimPoint()
     {
-        return Camera.main.transform.position + Vector3.down * 0.4f;
+        return CameraDirector.PlayerEye + Vector3.down * 0.4f; // the player, not the camera (it is high up in the map view)
     }
 
     private void Update()

@@ -817,16 +817,18 @@ public class Boss : MonoBehaviour
         stunned = true;
         Shake();
 
-        // 1. The question and its 3 answers, floating in an arc in front of the boss.
+        // 1. The question and its 3 answers, floating in a row in front of the
+        //    boss. They float low (2.3 m) so that, seen from the player, they
+        //    stay BELOW the quiz box at the top of the screen, never behind it.
         QuizQuestion question = QuizBank.Pick(spawner.UsedFirstLetters());
         hud.ShowQuiz(question.Question);
         Tutorial.Once("quiz", "BOSS QUIZ! Type the RIGHT answer for a critical hit. A wrong one heals it!", 6f);
 
         Vector3[] spots =
         {
-            new Vector3(-3.2f, 3.2f, -2.5f),
-            new Vector3(0f, 4.3f, -3f),
-            new Vector3(3.2f, 3.2f, -2.5f)
+            new Vector3(-3.2f, 2.3f, -2.5f),
+            new Vector3(0f, 2.3f, -3f),
+            new Vector3(3.2f, 2.3f, -2.5f)
         };
         answers.Clear();
         for (int i = 0; i < question.Answers.Length && i < spots.Length; i++)

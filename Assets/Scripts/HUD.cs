@@ -2037,7 +2037,7 @@ public class HUD : MonoBehaviour
     //   RANK  NAME           SCORE
     //   #1    ALICE          15200   <- six rows, the new entry highlighted
     //   ...
-    //   [PLAY AGAIN]  [QUIT]                   (shown once the name is saved)
+    //   [PLAY AGAIN]                           (shown once the name is saved)
     // GameManager feeds it (ShowLeaderboard, SetLeaderboardName, ShowLeaderboardRank).
 
     private const float BoardRowWidth = 900f;
@@ -2053,7 +2053,7 @@ public class HUD : MonoBehaviour
     private TMP_Text boardPrompt;
     private GameObject boardNameEntry;       // the name box and SAVE button
     private TMP_Text boardNameText;
-    private GameObject boardEndButtons;      // PLAY AGAIN, QUIT and their hint
+    private GameObject boardEndButtons;      // PLAY AGAIN and its hint
     private readonly Image[] boardRows = new Image[Leaderboard.Size];
     private readonly TMP_Text[] boardRanks = new TMP_Text[Leaderboard.Size];
     private readonly TMP_Text[] boardNames = new TMP_Text[Leaderboard.Size];
@@ -2251,14 +2251,13 @@ public class HUD : MonoBehaviour
             boardScores[i].fontStyle = FontStyles.Bold;
         }
 
-        // Play again / Quit, shown once the name is saved.
+        // Play again, shown once the name is saved. (No Quit button: the game
+        // runs in a web page, which cannot be closed from inside the game.)
         boardEndButtons = CreateRect("EndButtons", panel).gameObject;
         RectTransform buttons = (RectTransform)boardEndButtons.transform;
         PlaceRect(buttons, Centre, Centre, new Vector2(0f, -430f), new Vector2(BoardRowWidth, 140f));
-        TMP_Text again = CreateButton(buttons, "PlayAgainButton", "PLAY AGAIN", new Vector2(-190f, 20f), () => GameManager.Instance.RestartGame());
+        TMP_Text again = CreateButton(buttons, "PlayAgainButton", "PLAY AGAIN", new Vector2(0f, 20f), () => GameManager.Instance.RestartGame());
         again.transform.parent.GetComponent<Image>().color = new Color(0.2f, 0.45f, 0.25f);
-        TMP_Text quit = CreateButton(buttons, "QuitButton", "QUIT", new Vector2(190f, 20f), () => GameManager.Instance.QuitGame());
-        quit.transform.parent.GetComponent<Image>().color = new Color(0.5f, 0.18f, 0.18f);
         TMP_Text hint = CreateText(buttons, "Hint", "(or press ENTER to play again)", 24f, new Vector2(0f, -50f));
         hint.color = SmallTextColor;
 

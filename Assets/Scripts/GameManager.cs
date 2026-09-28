@@ -32,7 +32,7 @@ public enum GameState
     Tip,      // a first-time tip box is showing (game frozen); Enter or OK continues
     Won,      // the last area was cleared, "You survived" panel is showing (Enter / Continue: leaderboard)
     Lost,     // health reached 0, "You died" panel is showing
-    Scores    // the leaderboard page after Won / Lost: type a name, then Play again or Quit
+    Scores    // the leaderboard page after Won / Lost: type a name, then Play again
 }
 
 public class GameManager : MonoBehaviour
@@ -474,7 +474,7 @@ public class GameManager : MonoBehaviour
     // ---- Leaderboard (after the results panel) ----
     // Continue (or Enter) on the results panel opens the leaderboard page: the
     // player types a name (Enter saves it with the score, see Leaderboard),
-    // sees their rank among the six best, then plays again or quits.
+    // sees their rank among the six best, then plays again.
 
     private bool gameWon;
     private string typedName = "";
@@ -543,15 +543,5 @@ public class GameManager : MonoBehaviour
         string playerName = Leaderboard.CleanName(typedName);
         int rank = Leaderboard.Add(playerName, Stats.Score);
         hud.ShowLeaderboardRank(rank, playerName, Stats.Score);
-    }
-
-    // The Quit button: closes the game (in the Unity Editor: stops Play mode).
-    public void QuitGame()
-    {
-#if UNITY_EDITOR
-        UnityEditor.EditorApplication.isPlaying = false;
-#else
-        Application.Quit();
-#endif
     }
 }

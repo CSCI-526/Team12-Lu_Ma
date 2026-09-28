@@ -208,7 +208,12 @@ public class WaveSpawner : MonoBehaviour
     //     labelEdgeMargin inside that screen edge, so it can still be read and
     //     typed (KeepOnScreen). For a zombie that is off screen, this puts the
     //     word next to its red threat arrow (only zombies get arrows);
-    //   - it shrinks with distance, like the enemy does (labelReferenceDistance);
+    //   - it shrinks with distance, like the enemy does (labelReferenceDistance),
+    //     but is never drawn smaller than minWordFontSize, so it stays readable
+    //     even in the map view, where the camera is far above everything;
+    //   - it never goes under the HUD along the top of the screen (health,
+    //     combo, score): it stays labelTopMargin below the top edge, and
+    //     during the boss fight bossLabelTopMargin (below the boss's health bar);
     //   - words are placed one by one in priority order (the word being typed
     //     first, then the nearest enemy first). A word that would overlap one
     //     already placed is pushed up until it is clear, and slides there
@@ -221,8 +226,11 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private float labelMaxScale = 1.2f;         // near words never get bigger than this
     [SerializeField] private float labelGap = 4f;                // empty space (HUD units) between stacked words
     [SerializeField] private float labelSlideSharpness = 14f;    // higher = pushed words slide into place faster
-    [SerializeField] private float labelEdgeMargin = 110f;       // HUD units: words always stay this far inside the screen edges
-    private const float MapLabelScale = 0.7f;                    // in the map view (waves 2 and 4) words are drawn this much smaller
+    [SerializeField] private float labelEdgeMargin = 110f;       // HUD units: words always stay this far inside the side and bottom edges
+    [SerializeField] private float labelTopMargin = 150f;        // HUD units: ...and this far below the top edge (health, combo and score are up there)
+    [SerializeField] private float bossLabelTopMargin = 235f;    // HUD units: during the boss fight, below its health bar too
+    [SerializeField] private float minWordFontSize = 34f;        // HUD units: no word is ever drawn smaller (34 is about 19 pixels in a 960x600 browser window)
+    private const float MapLabelScale = 0.7f;                    // in the map view (waves 2 and 4) words are drawn this much smaller (but never below minWordFontSize)
 
     private readonly List<ITypingTarget> labelOrder = new List<ITypingTarget>();
     private readonly List<Rect> placedLabels = new List<Rect>();
@@ -232,6 +240,13 @@ public class WaveSpawner : MonoBehaviour
     private Dictionary<TMP_Text, Vector2> labelLifts = new Dictionary<TMP_Text, Vector2>();
     private Dictionary<TMP_Text, Vector2> nextLabelLifts = new Dictionary<TMP_Text, Vector2>();
 
+
+    // How far below the top edge words must stay right now (lower during the
+    // boss fight, when the boss's health bar is up there too).
+    private float TopMargin
+    {
+        get { return boss != null ? Mathf.Max(labelTopMargin, bossLabelTopMargin) : labelTopMargin; }
+    }
 
     private void LayoutLabels()
     {
@@ -286,6 +301,7 @@ public class WaveSpawner : MonoBehaviour
             }
             float mapBlend = CameraDirector.MapBlend;
             scale *= Mathf.Lerp(1f, MapLabelScale, mapBlend); // seen from high up, words are smaller
+            scale = Mathf.Max(scale, minWordFontSize / label.fontSize); // ...but never too small to read
             Vector2 textSize = new Vector2(label.preferredWidth, label.preferredHeight);
             labelRect.sizeDelta = textSize;
             labelRect.localScale = new Vector3(scale, scale, 1f);
@@ -355,7 +371,7 @@ public class WaveSpawner : MonoBehaviour
                 }
             }
         }
-        rect.y = Mathf.Min(rect.y, screen.yMax - labelEdgeMargin - rect.height);
+        rect.y = Mathf.Min(rect.y, screen.yMax - TopMargin - rect.height);
         return rect;
     }
 
@@ -371,7 +387,7 @@ public class WaveSpawner : MonoBehaviour
             return rect;
         }
 
-        Rect inside = new Rect(screen.xMin + 10f, screen.yMin + 10f, screen.width - 20f, screen.height - 20f);
+        Rect inside = new Rect(screen.xMin + 10f, screen.yMin + 10f, screen.width - 20f, screen.height - 10f - TopMargin);
         Rect best = rect;
         float bestCost = float.MaxValue;
         foreach (Rect placed in placedLabels)
@@ -427,7 +443,8 @@ public class WaveSpawner : MonoBehaviour
 
         // How far from the screen middle the box's middle may be.
         float roomX = Mathf.Max(0f, screen.width * 0.5f - labelEdgeMargin - size.x * 0.5f);
-        float roomY = Mathf.Max(0f, screen.height * 0.5f - labelEdgeMargin - size.y * 0.5f);
+        float roomUp = Mathf.Max(0f, screen.height * 0.5f - TopMargin - size.y * 0.5f);          // above the middle
+        float roomDown = Mathf.Max(0f, screen.height * 0.5f - labelEdgeMargin - size.y * 0.5f); // below the middle
 
         // fit = 1 means it already fits; smaller = pull it that much closer to the middle.
         float fit = 1f;
@@ -435,9 +452,13 @@ public class WaveSpawner : MonoBehaviour
         {
             fit = Mathf.Min(fit, roomX / Mathf.Abs(middle.x));
         }
-        if (Mathf.Abs(middle.y) > roomY)
+        if (middle.y > roomUp)
         {
-            fit = Mathf.Min(fit, roomY / Mathf.Abs(middle.y));
+            fit = Mathf.Min(fit, roomUp / middle.y);
+        }
+        if (middle.y < -roomDown)
+        {
+            fit = Mathf.Min(fit, roomDown / -middle.y);
         }
 
         // Pull the box's middle that much closer to the screen middle...

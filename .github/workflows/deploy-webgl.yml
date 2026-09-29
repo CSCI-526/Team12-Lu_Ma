@@ -1,13 +1,19 @@
-# Builds the Unity WebGL player on every push to main and publishes it to the
-# bunfloof/The-Typeblaster-of-the-Dead-Web-Build repository, which GitHub Pages
-# serves at https://bunfloof.github.io/The-Typeblaster-of-the-Dead-Web-Build/
+# Builds the Unity WebGL player on every push to main and publishes it with
+# GitHub Pages from THIS repository (no separate build repo, no build branch:
+# the build is uploaded straight to Pages).
+#
+# The site is served at https://<owner>.github.io/<repository>/ , for example
+# https://bunfloof.github.io/Team12-Lu_Ma/ (the path is case-sensitive).
+# Nothing below names the owner, so after the repository is transferred to an
+# organization this keeps working unchanged; only the link changes (GitHub does
+# not redirect the old Pages link).
+#
+# One-time setup: Settings > Pages > Build and deployment > Source: GitHub Actions.
 #
 # Secrets this workflow needs (Settings > Secrets and variables > Actions on THIS repo):
-#   UNITY_LICENSE       full contents of Unity_lic.ulf (Unity Personal license)
-#   UNITY_EMAIL         email of the Unity account that activated that license
-#   UNITY_PASSWORD      password of that Unity account
-#   ACTIONS_DEPLOY_KEY  private SSH key; its public half is a write-enabled
-#                       deploy key on bunfloof/The-Typeblaster-of-the-Dead-Web-Build
+#   UNITY_LICENSE   full contents of Unity_lic.ulf (Unity Personal license)
+#   UNITY_EMAIL     email of the Unity account that activated that license
+#   UNITY_PASSWORD  password of that Unity account
 
 name: Build and deploy WebGL
 
@@ -16,17 +22,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# If several commits land close together, only the newest one gets built and deployed.
+# One run at a time. A newer push waits for the running one to finish instead of
+# cancelling it (GitHub advises never cutting off a Pages deploy halfway); if
+# several pushes are waiting, only the newest one runs.
 concurrency:
   group: webgl-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  build-and-deploy:
-    name: Build WebGL and publish to GitHub Pages
+  build:
+    name: Build the WebGL player
     runs-on: ubuntu-latest
     steps:
       - name: Check out the project
@@ -61,13 +69,26 @@ jobs:
         with:
           targetPlatform: WebGL
 
-      # force_orphan keeps the build repo at a single commit so it does not grow
-      # by ~60 MB of binaries on every deploy. Remove it to keep deploy history.
-      - name: Publish the build to The-Typeblaster-of-the-Dead-Web-Build
-        uses: peaceiris/actions-gh-pages@v4
+      # Packs the build for Pages. It is not committed anywhere, so the
+      # repository does not grow with every build.
+      - name: Upload the build for GitHub Pages
+        uses: actions/upload-pages-artifact@v5
         with:
-          deploy_key: ${{ secrets.ACTIONS_DEPLOY_KEY }}
-          external_repository: bunfloof/The-Typeblaster-of-the-Dead-Web-Build
-          publish_branch: main
-          publish_dir: build/WebGL/WebGL
-          force_orphan: true
+          path: build/WebGL/WebGL
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Asked for here, so it also works in an organization whose default
+    # GITHUB_TOKEN is read-only.
+    permissions:
+      pages: write     # publish the site
+      id-token: write  # prove to Pages which branch this run comes from
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

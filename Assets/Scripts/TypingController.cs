@@ -35,8 +35,9 @@
 //   - Backspace drops the current target so the player can retarget.
 //   - Escape pauses the game (and resumes it from the pause panel, see
 //     GameManager.OnPauseKey). Keys typed while paused are ignored.
-//   - Enter closes a first-time power tip box, starts the game from the Start
+//   - Enter closes a first-time tip box, starts the game from the Start
 //     panel, and restarts it from the "You survived" / "You died" panels.
+//     A tip box never opens in the middle of a word (see GameManager.LateUpdate).
 //
 // INPUT BACKEND: this project uses Unity's Input System package
 // (Project Settings > Player > Active Input Handling), so typed characters come
@@ -70,12 +71,27 @@ public class TypingController : MonoBehaviour
     private readonly List<ITypingTarget> candidates = new List<ITypingTarget>();
     private readonly List<ITypingTarget> scratch = new List<ITypingTarget>();
     private int wordsFinished; // words finished in this run of typing (2+ = a word chain)
+    private float lastTypingTime = -100f; // Time.time the player last typed a letter (right or wrong) or dropped a word
 
     // The target being typed right now: the nearest candidate (null = none).
     // The camera turns toward it; the in-between shots go to it.
     public ITypingTarget CurrentTarget
     {
         get { return NearestCandidate(); }
+    }
+
+    // True while a word is half-typed. GameManager waits for the word to be
+    // finished (or dropped) before it opens a tip box.
+    public bool IsTypingWord
+    {
+        get { return candidates.Count > 0; }
+    }
+
+    // Game seconds since the player last typed a letter (right or wrong) or
+    // dropped a word (they are about to type the next one).
+    public float SecondsSinceTyping
+    {
+        get { return Time.time - lastTypingTime; }
     }
 
 #if ENABLE_INPUT_SYSTEM
@@ -185,6 +201,7 @@ public class TypingController : MonoBehaviour
                 candidate.ResetProgress();
             }
             candidates.Clear();
+            lastTypingTime = Time.time;
             EndRun();
         }
 
@@ -317,6 +334,8 @@ public class TypingController : MonoBehaviour
 
     private void HandleCharacter(char typed)
     {
+        lastTypingTime = Time.time;
+
         // Nothing being typed yet: this character picks every target whose word
         // starts with it (usually exactly one), and counts as their first character.
         if (candidates.Count == 0)
@@ -368,6 +387,10 @@ public class TypingController : MonoBehaviour
     // white). Called by Powers when a FRENZY swaps every enemy's word.
     public void DropWord()
     {
+        if (candidates.Count > 0)
+        {
+            lastTypingTime = Time.time; // a word was half-typed: the player goes on with a new one
+        }
         foreach (ITypingTarget candidate in candidates)
         {
             candidate.ResetProgress();

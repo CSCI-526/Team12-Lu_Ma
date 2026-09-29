@@ -165,8 +165,9 @@ public class Powers : MonoBehaviour
 
     // Gives the player one more charge. Returns false (and shows nothing) if
     // that power is already full (maxCharges). On a gain, a "+1" rises next to
-    // the power on the HUD, and the very first charge of each power pauses the
-    // game with a tip box explaining it (GameManager.RequestPowerTip).
+    // the power on the HUD, and the very first charge of each power asks for a
+    // tip box explaining it (GameManager.RequestPowerTip: the box waits until the
+    // player is not typing or aiming, and never opens while tips are turned off).
     public bool AddCharge(PowerKind kind)
     {
         if (kind == PowerKind.Lure)

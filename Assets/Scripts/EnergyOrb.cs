@@ -8,9 +8,11 @@
 //   - too slow -> the orb reaches the player and deals its damage.
 //
 // Orb words are short but tricky: case-sensitive, with digits and symbols
-// (WordBank.PickOrbWord). The freeze power stops it in mid-air, with an
-// ice-blue outline. IsCaseSensitive = true tells TypingController to
-// compare every character exactly.
+// (WordBank.PickOrbWord), and drawn in pink like the orb (Palette.WordOrb),
+// flashing with every throb of the orb: the word to type first.
+// The freeze power stops it in mid-air, with an ice-blue outline.
+// IsCaseSensitive = true tells TypingController to compare every character
+// exactly.
 //
 // The freeze power stops orbs in mid-air.
 //
@@ -64,6 +66,7 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
         orb.speed = Vector3.Distance(position, AimPoint()) / Mathf.Max(0.1f, flightSeconds);
 
         orb.Label = hud.CreateWordLabel(new Vector2(0.5f, 0f)); // centred above the orb
+        orb.Label.color = Palette.WordOrb; // pink like the orb, so it reads as "orb: type it exactly"
         orb.RefreshLabel();
         orb.BuildFrozenOutline();
         return orb;
@@ -123,15 +126,18 @@ public class EnergyOrb : MonoBehaviour, ITypingTarget
         }
 
         // The freeze power stops it in mid-air (there is still time to type it):
-        // it holds still, with an ice-blue outline, and stops throbbing.
+        // it holds still, with an ice-blue outline, and stops throbbing (and flashing).
         if (Powers.IsFrozen)
         {
             return;
         }
 
-        // Throb, so it reads as "dangerous energy".
-        float pulse = 1f + Mathf.Sin(Time.time * PulseSpeed) * PulseAmount;
+        // Throb, so it reads as "dangerous energy". Its word flashes with every
+        // throb (pink -> almost white), so it stands out as the word to type first.
+        float wave = Mathf.Sin(Time.time * PulseSpeed); // -1 .. 1
+        float pulse = 1f + wave * PulseAmount;
         transform.localScale = Vector3.one * Size * pulse;
+        Label.color = Color.Lerp(Palette.WordOrb, Palette.WordOrbFlash, (wave + 1f) * 0.5f);
 
         Vector3 aim = AimPoint();
         transform.position = Vector3.MoveTowards(transform.position, aim, speed * Time.deltaTime);

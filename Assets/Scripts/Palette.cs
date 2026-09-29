@@ -44,6 +44,8 @@ public static class Palette
     public static readonly Color WordQuiz = new Color(0.40f, 0.90f, 1.00f);
     public static readonly Color WordArmor = new Color(0.75f, 0.80f, 0.90f);
     public static readonly Color WordChain = new Color(0.82f, 0.52f, 1.00f); // purple: a WORD CHAIN pair (hunt / hunter) and its link line
+    public static readonly Color WordOrb = new Color(1.00f, 0.55f, 0.85f);   // pink, like the boss's energy orbs (their words are case-sensitive); lighter than WordFrenzy so the two never look alike
+    public static readonly Color WordOrbFlash = new Color(1.00f, 0.92f, 0.97f); // almost white: an orb's word flashes up to this with every throb
     public static readonly Color WordFrenzy = new Color(1.00f, 0.25f, 0.35f); // vivid red: the short words during a FRENZY
     public static readonly Color WeaponFrenzy = new Color(1.00f, 0.30f, 0.20f); // the FRENZY weapon: its HUD slot, skull icon and status line
 

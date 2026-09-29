@@ -17,7 +17,7 @@
 //   GameManager.Instance.AddKill();
 //   if (GameManager.Instance.State == GameState.Playing) { ... }
 //
-// The references below (hud, spawner, powers) are wired in the scene.
+// The references below (hud, spawner, powers, typing) are wired in the scene.
 // ---------------------------------------------------------------------------
 using System.Collections.Generic;
 using UnityEngine;
@@ -46,6 +46,7 @@ public class GameManager : MonoBehaviour
     [SerializeField] private HUD hud;
     [SerializeField] private WaveSpawner spawner;
     [SerializeField] private Powers powers;
+    [SerializeField] private TypingController typing;
 
     // Each kill is worth PointsPerKill x the current combo (x the multi-kill
     // multiplier when one blast kills several, see AddKills).
@@ -83,6 +84,7 @@ public class GameManager : MonoBehaviour
         hud.SetCombo(Combo);
         hud.SetHealth(Health, startingHealth);
         hud.ShowStartPanel();
+        hud.SetTipsToggle(tipsEnabled); // after a Restart, show the choice the player made before
     }
 
     private void OnDestroy()
@@ -104,10 +106,11 @@ public class GameManager : MonoBehaviour
     }
 
     // Tips are opened here, at the END of the frame, so everything that was
-    // already happening this frame (bullets landing, a chain of kills) finishes first.
+    // already happening this frame (bullets landing, a chain of kills) finishes
+    // first. A tip also waits while the player is busy (see PlayerIsBusy).
     private void LateUpdate()
     {
-        if (State == GameState.Playing && pendingTips.Count > 0)
+        if (State == GameState.Playing && pendingTips.Count > 0 && !PlayerIsBusy())
         {
             ShowNextTip();
         }
@@ -118,25 +121,57 @@ public class GameManager : MonoBehaviour
     // first WORD CHAIN pair) pauses the game with a box that explains it (built
     // by HUD). Enter or the OK button continues. Static, like Tutorial: after a
     // Restart they are not shown again.
+    //
+    // A tip never cuts into typing: it waits until no word is half-typed, no
+    // lure bomb is being aimed, and nothing was typed for TipWaitSeconds (so
+    // it does not pop up between two words typed one after the other). A tip
+    // still waiting when the run ends is shown in the next run (RestartGame).
+    //
+    // The "Show tips" toggle on the Start panel turns them off (SetTipsEnabled).
+
+    private const float TipWaitSeconds = 0.75f;
 
     private struct PendingTip
     {
+        public string Key;
         public string Title;
         public string Text;
         public Color Color;
     }
 
     private static readonly HashSet<string> tipsShown = new HashSet<string>();
+    private static bool tipsEnabled = true; // static: the choice survives a Restart
     private readonly Queue<PendingTip> pendingTips = new Queue<PendingTip>();
 
-    // Shows the tip called key once (it opens at the end of this frame).
+    // Called by the "Show tips" toggle on the Start panel (wired in the scene).
+    public void SetTipsEnabled(bool on)
+    {
+        tipsEnabled = on;
+    }
+
+    // True while the player is in the middle of something a tip box would
+    // interrupt (see the note above).
+    private bool PlayerIsBusy()
+    {
+        return typing.IsTypingWord
+            || typing.SecondsSinceTyping < TipWaitSeconds
+            || powers.IsAiming;
+    }
+
+    // Shows the tip called key once (it opens as soon as the player is not busy).
+    // With tips turned off, nothing is shown (and nothing is marked as shown).
     public void RequestTip(string key, string title, string text, Color titleColor)
     {
+        if (!tipsEnabled)
+        {
+            return;
+        }
         if (!tipsShown.Add(key))
         {
             return; // already explained
         }
         PendingTip tip;
+        tip.Key = key;
         tip.Title = title;
         tip.Text = text;
         tip.Color = titleColor;
@@ -215,6 +250,13 @@ public class GameManager : MonoBehaviour
     // the same screen as when the game is first opened.
     public void RestartGame()
     {
+        // Tips still waiting (the player was busy until the end) were never
+        // seen: forget them, so they are shown in the next run.
+        foreach (PendingTip tip in pendingTips)
+        {
+            tipsShown.Remove(tip.Key);
+        }
+
         Time.timeScale = 1f; // in case we restart from the pause panel
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }

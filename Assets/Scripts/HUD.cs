@@ -11,7 +11,7 @@
 //     (rocket): lit while one is kept, clickable to use it
 //   - while 1 is held (aiming the lure bomb): an arrow-keys hint in a dark box
 //     (bottom-right); a "+1" next to a power whenever a charge is gained
-//   - the first-time power tip box (the game waits until Enter / OK)
+//   - the first-time tip box (the game waits until Enter / OK)
 //   - the current target's word (bottom-centre) and a hint box just above it
 //   - red arrows at the screen edges pointing at zombies you cannot see
 //   - floating texts ("+30 HEALTH") that rise from a point in the world
@@ -20,8 +20,9 @@
 //   - the enemies' words (CreateWordLabel). They are drawn on this Canvas, on
 //     top of the 3D scene, so an enemy's body can never hide another's word.
 //     WaveSpawner.LayoutLabels moves them to their enemies every frame.
-//   - the Start, "You survived" and "You died" panels (with the run's stats
-//     at the end), the pause panel and the 3-2-1 resume countdown
+//   - the Start panel (with its "Show tips" toggle), the "You survived" and
+//     "You died" panels (with the run's stats at the end), the pause panel
+//     and the 3-2-1 resume countdown
 //
 // The HUD never decides anything. Other scripts call these methods when a value
 // changes (for example GameManager calls SetScore after a kill).
@@ -68,6 +69,7 @@ public class HUD : MonoBehaviour
     [SerializeField] private GameObject lostPanel;
     [SerializeField] private TMP_Text wonScoreText;
     [SerializeField] private TMP_Text lostScoreText;
+    [SerializeField] private Toggle tipsToggle;           // "Show tips" on the Start panel
 
     [Header("Boss health bar (built in code, see BuildBossBar)")]
     [SerializeField] private Vector2 bossBarSize = new Vector2(700f, 26f);
@@ -473,6 +475,13 @@ public class HUD : MonoBehaviour
     {
         HideAllPanels();
         startPanel.SetActive(true);
+    }
+
+    // Ticks or unticks "Show tips" without calling its OnValueChanged (GameManager
+    // already knows the value; it just has to be shown again after a Restart).
+    public void SetTipsToggle(bool on)
+    {
+        tipsToggle.SetIsOnWithoutNotify(on);
     }
 
     public void ShowWonPanel(int finalScore)

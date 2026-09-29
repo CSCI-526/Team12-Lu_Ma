@@ -217,8 +217,9 @@ public class WaveSpawner : MonoBehaviour
     //   - words are placed one by one in priority order (the word being typed
     //     first, then the nearest enemy first). A word that would overlap one
     //     already placed is pushed up until it is clear, and slides there
-    //     smoothly, but never past the top edge: in a big pile-up the extra
-    //     words stop at the top edge and are drawn over each other.
+    //     smoothly, but never past the top edge: when there is no room left
+    //     above, it moves the shortest way to a free spot instead (below or
+    //     beside the words in the way).
 
     [Header("Enemy words")]
     [SerializeField] private float labelReferenceDistance = 12f; // at this distance a word is drawn at full size
@@ -231,6 +232,8 @@ public class WaveSpawner : MonoBehaviour
     [SerializeField] private float bossLabelTopMargin = 235f;    // HUD units: during the boss fight, below its health bar too
     [SerializeField] private float minWordFontSize = 34f;        // HUD units: no word is ever drawn smaller (34 is about 19 pixels in a 960x600 browser window)
     private const float MapLabelScale = 0.7f;                    // in the map view (waves 2 and 4) words are drawn this much smaller (but never below minWordFontSize)
+    private const float LabelSideGap = 30f;                      // HUD units between two words placed side by side (with less, they read as one word)
+    private const float LabelSwitchBand = 15f;                   // HUD units: dead band for StackUp (more than the camera's breathing plus one letter's kick)
 
     private readonly List<ITypingTarget> labelOrder = new List<ITypingTarget>();
     private readonly List<Rect> placedLabels = new List<Rect>();
@@ -306,15 +309,16 @@ public class WaveSpawner : MonoBehaviour
             labelRect.sizeDelta = textSize;
             labelRect.localScale = new Vector3(scale, scale, 1f);
 
-            // The word's box on screen with no push, then pushed up past every
-            // word already placed. It only ever moves up, so this always finishes.
+            // The word's box on screen with no push, then moved off the words
+            // already placed.
             Vector2 size = textSize * scale;
             anchor = KeepOnScreen(anchor, size, labelRect.pivot, layer.rect);
             Rect baseRect = new Rect(anchor - Vector2.Scale(size, labelRect.pivot), size);
-            // First person: push the word UP past every word already placed.
+            // First person: push the word UP past every word already placed (no
+            // room left at the top: to the nearest free spot instead).
             // Map view (seen from above, words crowd together): move it the
             // shortest way, in any direction, to a free spot.
-            Rect rect = mapBlend > 0.5f ? SpreadOut(baseRect, layer.rect) : StackUp(baseRect, layer.rect);
+            Rect rect = mapBlend > 0.5f ? SpreadOut(baseRect, layer.rect) : StackUp(baseRect, layer.rect, WasMovedAside(label));
             placedLabels.Add(rect);
 
             // Slide toward the new spot (new words jump straight there).
@@ -355,31 +359,56 @@ public class WaveSpawner : MonoBehaviour
     //   size   = the word's size on screen, pivot = the word's pivot, screen = the word layer
     // First person: pushes the word up past every word already placed (it only
     // ever moves up, so this always finishes), but never off the top of the
-    // screen: in a big pile-up the extra words stop at the top edge.
-    private Rect StackUp(Rect rect, Rect screen)
+    // screen. If the pile is too high for that (words piled up high on the
+    // screen, like the boss's head word and its energy orbs), it moves the
+    // shortest way to a free spot instead (FindFreeSpot). Only when no spot is
+    // free does it stop at the top edge, drawn over another word.
+    // The top limit stays still while the camera kicks (every letter) and
+    // breathes, so a dead band (LabelSwitchBand) keeps the choice steady: a
+    // stacked word moves aside only when the pile is clearly too high, and a
+    // word moved aside (wasMovedAside) comes back only when there is clearly room.
+    private Rect StackUp(Rect rect, Rect screen, bool wasMovedAside)
     {
+        Rect pushed = rect;
         bool moved = true;
         while (moved)
         {
             moved = false;
             foreach (Rect placed in placedLabels)
             {
-                if (rect.Overlaps(placed))
+                if (pushed.Overlaps(placed))
                 {
-                    rect.y = placed.yMax + labelGap;
+                    pushed.y = placed.yMax + labelGap;
                     moved = true;
                 }
             }
         }
-        rect.y = Mathf.Min(rect.y, screen.yMax - TopMargin - rect.height);
-        return rect;
+
+        float highest = screen.yMax - TopMargin - pushed.height; // the word's bottom edge when it touches the top limit
+        float switchAt = wasMovedAside ? highest - LabelSwitchBand : highest + LabelSwitchBand;
+        if (pushed.y > rect.y && pushed.y > switchAt) // it had to be pushed, and the pile is too high
+        {
+            Rect free;
+            if (FindFreeSpot(rect, screen, out free))
+            {
+                return free;
+            }
+        }
+        pushed.y = Mathf.Min(pushed.y, highest);
+        return pushed;
     }
 
-    // Map view: the word already fits -> it stays. Otherwise try every spot just
-    // above, below, left or right of each word in the way, and take the free
-    // one (no overlap, on screen) closest to where the word wants to be.
-    // Sideways moves count a little more, so words prefer to move up / down.
-    // If no single move frees it, fall back to stacking it up.
+    // True if last frame the word sat below or beside its own spot, so StackUp
+    // had moved it to a free spot (a stacked word only ever moves up).
+    private bool WasMovedAside(TMP_Text label)
+    {
+        Vector2 lastLift;
+        return labelLifts.TryGetValue(label, out lastLift) && (lastLift.x != 0f || lastLift.y < -1f);
+    }
+
+    // Map view: the word already fits -> it stays. Otherwise it moves the
+    // shortest way to a free spot (FindFreeSpot). If no single move frees it,
+    // fall back to stacking it up.
     private Rect SpreadOut(Rect rect, Rect screen)
     {
         if (!OverlapsPlaced(rect))
@@ -387,22 +416,31 @@ public class WaveSpawner : MonoBehaviour
             return rect;
         }
 
+        Rect free;
+        if (FindFreeSpot(rect, screen, out free))
+        {
+            return free;
+        }
+        return StackUp(rect, screen, false);
+    }
+
+    // Tries every spot just above, below, left or right of each word already
+    // placed, and gives back the free one (no overlap, on screen) closest to
+    // where the word wants to be. Sideways moves count a little more, so words
+    // prefer to move up / down. Returns false if no single move frees it.
+    private bool FindFreeSpot(Rect rect, Rect screen, out Rect best)
+    {
         Rect inside = new Rect(screen.xMin + 10f, screen.yMin + 10f, screen.width - 20f, screen.height - 10f - TopMargin);
-        Rect best = rect;
+        best = rect;
         float bestCost = float.MaxValue;
         foreach (Rect placed in placedLabels)
         {
             TrySpot(new Rect(rect.x, placed.yMax + labelGap, rect.width, rect.height), rect, inside, ref best, ref bestCost);
             TrySpot(new Rect(rect.x, placed.yMin - rect.height - labelGap, rect.width, rect.height), rect, inside, ref best, ref bestCost);
-            TrySpot(new Rect(placed.xMin - rect.width - labelGap, rect.y, rect.width, rect.height), rect, inside, ref best, ref bestCost);
-            TrySpot(new Rect(placed.xMax + labelGap, rect.y, rect.width, rect.height), rect, inside, ref best, ref bestCost);
+            TrySpot(new Rect(placed.xMin - rect.width - LabelSideGap, rect.y, rect.width, rect.height), rect, inside, ref best, ref bestCost);
+            TrySpot(new Rect(placed.xMax + LabelSideGap, rect.y, rect.width, rect.height), rect, inside, ref best, ref bestCost);
         }
-
-        if (bestCost < float.MaxValue)
-        {
-            return best;
-        }
-        return StackUp(rect, screen);
+        return bestCost < float.MaxValue;
     }
 
     private void TrySpot(Rect spot, Rect wanted, Rect inside, ref Rect best, ref float bestCost)

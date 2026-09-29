@@ -1,7 +1,7 @@
 // QuizBank.cs
 // ---------------------------------------------------------------------------
-// The questions the boss asks, Typing of the Dead style. When all 5 of the
-// boss's parts are broken it is stunned and asks a question: the question
+// The questions the boss asks, Typing of the Dead style. When all 4 of the
+// boss's limbs are off it is stunned and asks a question: the question
 // appears in big letters and 3 answer words float in front of the boss. The
 // player TYPES one of them:
 //   - the right answer -> critical hit on the boss,

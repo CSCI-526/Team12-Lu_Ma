@@ -12,11 +12,7 @@
 // flashing with every throb of the orb: the word to type first.
 // The freeze power stops it in mid-air, with an ice-blue outline.
 // IsCaseSensitive = true tells TypingController to compare every character
-// exactly.
-//
-// The freeze power stops orbs in mid-air.
-//
-// Built entirely in code (a pulsing pink sphere), so it needs no prefab.
+// exactly. The orb itself is a pulsing pink sphere.
 // ---------------------------------------------------------------------------
 using System.Collections;
 using TMPro;

@@ -254,11 +254,6 @@ public class WaveSpawner : MonoBehaviour
     private void LayoutLabels()
     {
         RectTransform layer = hud.WordLayer;
-        if (layer == null)
-        {
-            return; // no word has been created yet
-        }
-
         Camera cam = Camera.main;
         Vector3 cameraPosition = cam.transform.position;
 

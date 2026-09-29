@@ -1,10 +1,10 @@
 // Boss.cs
 // ---------------------------------------------------------------------------
-// The boss of the last area (see Level and WaveSpawner). It is built entirely
-// in code (Boss.Create), so it needs no prefab: a big grey figure made of a
-// torso, a head, 2 arms and 2 legs. The torso, arms and legs are capsules, the
-// same shape as a zombie's body; the head is a sphere. Arms and legs hang from
-// a shoulder / hip "pivot", so they can swing (the attack animations).
+// The boss of the last area (see Level and WaveSpawner), made by Boss.Create:
+// a big grey figure with a torso, a head, 2 arms and 2 legs. The torso, arms
+// and legs are capsules, the same shape as a zombie's body; the head is a
+// sphere. Arms and legs hang from a shoulder / hip "pivot", so they can swing
+// (the attack animations).
 //
 // WORDS - 9 at the start:
 //   - HEAD: one hard word (WordBank.PickBossWord). Typing it deals headDamage
@@ -55,7 +55,7 @@ public class Boss : MonoBehaviour
     [SerializeField] private float limbWordDamage = 50f;        // each word typed on an arm or a leg
     [SerializeField] private float limbSeverDamage = 60f;       // extra when a limb falls off
     // During a FRENZY the boss's words are tiny and fast to type, so each one
-    // hurts it less (a constant: the scene keeps Inspector values it saved).
+    // hurts it less.
     private const float FrenzyWordDamageScale = 0.4f;
     [SerializeField] private float regrowSeconds = 1.5f;        // pause before the limbs grow back
 

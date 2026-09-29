@@ -36,9 +36,10 @@
 // DRAWING ORDER. uGUI draws a Canvas's children in order: a later child is
 // drawn on top of an earlier one. From back to front:
 //   enemy words < readouts (health, score, powers, quiz...) < markers (threat
-//   arrows, floating texts) < hint < red flash < Start/Won/Lost panels
-//   < pause panel. EnsureLayers creates one empty full-screen "layer" object
-//   per group so the pieces built later still land at the right depth.
+//   arrows, floating texts) < hint < red flash < big popup < Start/Won/Lost
+//   panels < pause panel < countdown. The scene has one empty full-screen
+//   "layer" object per group (Enemy Words, Readouts, Markers, Hint), so the
+//   pieces made while playing land at the right depth.
 // ---------------------------------------------------------------------------
 using System.Collections.Generic;
 using System.Globalization;
@@ -55,8 +56,9 @@ public class HUD : MonoBehaviour
     [SerializeField] private TMP_Text comboText;
     [SerializeField] private TMP_Text targetWordText;
 
-    [Header("Wave banner")]
+    [Header("Wave banner and big popup")]
     [SerializeField] private TMP_Text bannerText;
+    [SerializeField] private TMP_Text multiKillText;      // the big popup: "TRIPLE KILL!", "WORD CHAIN x2!", "FRENZY!"
 
     [Header("Wrong-key flash")]
     [SerializeField] private Image flashImage;           // full-screen red image, normally invisible
@@ -70,31 +72,39 @@ public class HUD : MonoBehaviour
     [SerializeField] private TMP_Text wonScoreText;
     [SerializeField] private TMP_Text lostScoreText;
     [SerializeField] private Toggle tipsToggle;           // "Show tips" on the Start panel
+    [SerializeField] private GameObject pausePanel;       // Esc: its Resume and Restart buttons call GameManager
+    [SerializeField] private TMP_Text countdownText;      // the 3-2-1 before play resumes
 
-    [Header("Boss health bar (built in code, see BuildBossBar)")]
+    // Empty full-screen objects in the scene (see DRAWING ORDER at the top).
+    [Header("Drawing layers")]
+    [SerializeField] private RectTransform wordLayer;     // enemy words: the first child (only the boss bar goes under it)
+    [SerializeField] private RectTransform readoutLayer;  // powers, combo plate, quiz, aim hint
+    [SerializeField] private RectTransform markerLayer;   // threat arrows, floating texts
+    [SerializeField] private RectTransform hintLayer;     // hint box
+
+    [Header("Boss health bar")]
     [SerializeField] private Vector2 bossBarSize = new Vector2(700f, 26f);
-    // The bar sits under the combo plate (top-centre): a constant, not an Inspector
-    // value, because the scene keeps the old value saved.
+    // The bar sits under the combo plate (top-centre).
     private const float BossBarTop = 190f; // canvas units from the top of the screen (its title is above it)
     [SerializeField] private Color bossBarColor = new Color(0.85f, 0.1f, 0.1f);
 
-    [Header("Enemy words (built in code, see CreateWordLabel)")]
+    [Header("Enemy words")]
     [SerializeField] private float wordFontSize = 40f;   // size at scale 1 (see WaveSpawner.LayoutLabels)
     [SerializeField] private float wordOutlineWidth = 0.25f;
 
-    [Header("Powers (bottom-left, built in code)")]
+    [Header("Powers (bottom-left)")]
     [SerializeField] private float powersMargin = 40f;        // canvas units from the left and bottom edges
     [SerializeField] private float powerPulseSeconds = 0.4f;  // PulsePower: how long a row grows and flashes
     [SerializeField] private float powerPulseScale = 1.25f;   // PulsePower: row size at the top of the pulse
     [SerializeField] private float powerEmptyAlpha = 0.4f;    // a power with no charges is dimmed to this
 
-    [Header("Threat arrows (built in code)")]
+    [Header("Threat arrows")]
     [SerializeField] private Color threatArrowColor = new Color(1f, 0.18f, 0.12f);  // red
     [SerializeField] private float threatArrowInset = 70f;    // canvas units between an arrow and the screen edge
     [SerializeField] private float threatNearDistance = 8f;   // metres: closer threats get a big, fully opaque arrow
     [SerializeField] private float threatFarDistance = 30f;   // metres: farther threats get a small, faint arrow
 
-    [Header("Feedback (built in code)")]
+    [Header("Feedback")]
     [SerializeField] private float floatingTextSeconds = 1.1f;  // lifetime of a floating text
     [SerializeField] private float floatingTextRise = 70f;      // canvas units it rises during its life
 
@@ -110,11 +120,7 @@ public class HUD : MonoBehaviour
 
     private float flashTimer; // counts down from flashDuration to 0 while a flash is fading
 
-    private RectTransform wordLayer;  // full-screen parent of every enemy word
     private Material wordMaterial;    // the font with a black outline, shared by every outlined text
-
-    private GameObject pausePanel;    // null until the first pause
-    private TMP_Text countdownText;   // null until the first resume
 
     private GameObject bossBar;       // null until the first boss fight
     private RectTransform bossBarFill;
@@ -307,7 +313,6 @@ public class HUD : MonoBehaviour
     // at the top-centre, in the readout layer so enemy words never cover it.
     private void BuildComboPlate()
     {
-        EnsureLayers();
         Image plate = CreateImage("ComboPlate", readoutLayer, new Color(0f, 0f, 0f, 0.55f));
         comboPlate = plate.rectTransform;
         PlaceRect(comboPlate, TopCentre, TopCentre, new Vector2(0f, -ComboPlateTop), ComboPlateSize);
@@ -386,7 +391,6 @@ public class HUD : MonoBehaviour
     private const float MultiKillFadeSeconds = 0.4f;  // fading out
     private const float MultiKillPopScale = 1.6f;
 
-    private TMP_Text multiKillText; // null until the first multi-kill
     private float multiKillAge = float.MaxValue;
 
     // A WORD CHAIN (typing "hunter" also killed "hunt"): the same big popup as a
@@ -428,16 +432,7 @@ public class HUD : MonoBehaviour
     // The big popup above the middle of the screen: a title, and a smaller line under it.
     private void ShowBigPopup(string title, string subtitle)
     {
-        if (multiKillText == null)
-        {
-            multiKillText = CreateText(transform, "MultiKill", "", 96f, new Vector2(0f, 230f));
-            multiKillText.color = new Color(1f, 0.6f, 0.15f);
-            multiKillText.rectTransform.sizeDelta = new Vector2(1400f, 220f);
-            multiKillText.fontStyle = FontStyles.Bold;
-        }
-
         multiKillText.text = title + "\n<size=55%>" + subtitle + "</size>";
-        multiKillText.transform.SetAsLastSibling();
         multiKillText.gameObject.SetActive(true);
         multiKillAge = 0f;
         UpdateMultiKill();
@@ -445,7 +440,7 @@ public class HUD : MonoBehaviour
 
     private void UpdateMultiKill()
     {
-        if (multiKillText == null || !multiKillText.gameObject.activeSelf)
+        if (!multiKillText.gameObject.activeSelf)
         {
             return;
         }
@@ -511,10 +506,7 @@ public class HUD : MonoBehaviour
         HideCountdown();
         HidePowerTip();
         HideQuiz();
-        if (multiKillText != null)
-        {
-            multiKillText.gameObject.SetActive(false);
-        }
+        multiKillText.gameObject.SetActive(false);
     }
 
     // ---- Boss health bar (top-centre) ----
@@ -599,18 +591,6 @@ public class HUD : MonoBehaviour
     // The owner destroys the word's GameObject when the enemy goes away.
     public TMP_Text CreateWordLabel(Vector2 pivot)
     {
-        if (wordLayer == null)
-        {
-            GameObject layer = new GameObject("EnemyWords", typeof(RectTransform));
-            wordLayer = layer.GetComponent<RectTransform>();
-            wordLayer.SetParent(transform, false);
-            wordLayer.SetAsFirstSibling(); // under every other part of the HUD
-            wordLayer.anchorMin = Vector2.zero;
-            wordLayer.anchorMax = Vector2.one;
-            wordLayer.offsetMin = Vector2.zero;
-            wordLayer.offsetMax = Vector2.zero;
-        }
-
         GameObject word = new GameObject("Word", typeof(RectTransform), typeof(TextMeshProUGUI));
         RectTransform rect = word.GetComponent<RectTransform>();
         rect.SetParent(wordLayer, false);
@@ -669,69 +649,24 @@ public class HUD : MonoBehaviour
 
     public void ShowPausePanel()
     {
-        if (pausePanel == null)
-        {
-            BuildPausePanel();
-        }
-        pausePanel.transform.SetAsLastSibling(); // on top of everything
         pausePanel.SetActive(true);
     }
 
     public void HidePausePanel()
     {
-        if (pausePanel != null)
-        {
-            pausePanel.SetActive(false);
-        }
+        pausePanel.SetActive(false);
     }
 
     // Big number in the middle of the screen while the game is about to resume.
     public void ShowCountdown(string text)
     {
-        if (countdownText == null)
-        {
-            countdownText = CreateText(transform, "Countdown", "", 220f, Vector2.zero);
-            countdownText.color = new Color(1f, 0.82f, 0.12f);
-        }
-        countdownText.transform.SetAsLastSibling();
         countdownText.text = text;
         countdownText.gameObject.SetActive(true);
     }
 
     public void HideCountdown()
     {
-        if (countdownText != null)
-        {
-            countdownText.gameObject.SetActive(false);
-        }
-    }
-
-    // PausePanel (dark full-screen) > "PAUSED", hint text, Resume and Restart buttons.
-    private void BuildPausePanel()
-    {
-        pausePanel = new GameObject("PausePanel", typeof(RectTransform), typeof(Image));
-        RectTransform panelRect = pausePanel.GetComponent<RectTransform>();
-        panelRect.SetParent(transform, false);
-        panelRect.anchorMin = Vector2.zero;
-        panelRect.anchorMax = Vector2.one;
-        panelRect.offsetMin = Vector2.zero;
-        panelRect.offsetMax = Vector2.zero;
-        pausePanel.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.7f);
-
-        CreateText(panelRect, "Title", "PAUSED", 110f, new Vector2(0f, 180f));
-        CreateText(panelRect, "Hint", "Press Esc to resume", 36f, new Vector2(0f, 80f));
-        CreateButton(panelRect, "ResumeButton", "Resume", new Vector2(0f, -40f), OnResumeClicked);
-        CreateButton(panelRect, "RestartButton", "Restart", new Vector2(0f, -150f), OnRestartClicked);
-    }
-
-    private void OnResumeClicked()
-    {
-        GameManager.Instance.ResumeGame();
-    }
-
-    private void OnRestartClicked()
-    {
-        GameManager.Instance.RestartGame();
+        countdownText.gameObject.SetActive(false);
     }
 
     private TMP_Text CreateText(Transform parent, string objectName, string text, float fontSize, Vector2 position)
@@ -776,57 +711,6 @@ public class HUD : MonoBehaviour
         TMP_Text label = CreateText(rect, "Text", text, 40f, Vector2.zero);
         label.rectTransform.sizeDelta = rect.sizeDelta;
         return label;
-    }
-
-    // =====================================================================
-    // The newer HUD pieces. Everything below is built in code the first time
-    // it is needed, like the boss bar and pause panel.
-    // =====================================================================
-
-    // ---- Drawing layers ----
-    // Empty full-screen objects that keep the pieces below in the drawing order
-    // described at the top of this file. They are created together, all just
-    // under the red wrong-key flash (so also under the Start/Won/Lost panels).
-
-    private RectTransform readoutLayer;   // powers, combo reward, quiz
-    private RectTransform markerLayer;    // threat arrows, floating texts
-    private RectTransform hintLayer;      // hint box
-
-    private void EnsureLayers()
-    {
-        if (readoutLayer != null)
-        {
-            return; // already created
-        }
-
-        // Each new layer is inserted just under the red flash, so each one ends
-        // up on top of the layer created before it.
-        readoutLayer = CreateLayer("Readouts");
-        markerLayer = CreateLayer("Markers");
-        hintLayer = CreateLayer("Hint");
-    }
-
-    private RectTransform CreateLayer(string layerName)
-    {
-        RectTransform layer = CreateRect(layerName, transform);
-        StretchToParent(layer);
-        layer.SetSiblingIndex(LayerInsertIndex());
-        return layer;
-    }
-
-    // Where a new layer goes among the Canvas's children: at the red flash's
-    // place, which pushes the flash (and everything after it) one step up.
-    private int LayerInsertIndex()
-    {
-        if (flashImage != null && flashImage.transform.parent == transform)
-        {
-            return flashImage.transform.GetSiblingIndex();
-        }
-        if (startPanel != null && startPanel.transform.parent == transform)
-        {
-            return startPanel.transform.GetSiblingIndex();
-        }
-        return transform.childCount - 1;
     }
 
     // ---- Powers (bottom-left) ----
@@ -1045,7 +929,6 @@ public class HUD : MonoBehaviour
     // Powers (bottom-left corner) > one row per power > KeyCap (+ Key text), Name, Pips.
     private void BuildPowers()
     {
-        EnsureLayers();
         float panelHeight = PowerCount * PowerRowHeight + (PowerCount - 1) * PowerRowGap;
         powersPanel = CreateRect("Powers", readoutLayer);
         PlaceRect(powersPanel, BottomLeft, BottomLeft, new Vector2(powersMargin, BottomRowY()),
@@ -1160,7 +1043,6 @@ public class HUD : MonoBehaviour
 
         if (aimHintBox == null)
         {
-            EnsureLayers();
             aimHintBox = CreateImage("AimHint", readoutLayer, new Color(0f, 0f, 0f, 0.6f));
 
             TMP_Text text = CreateText(aimHintBox.rectTransform, "Text", AimHintText, AimHintFontSize, Vector2.zero);
@@ -1335,14 +1217,12 @@ public class HUD : MonoBehaviour
     private static readonly Vector2 ComboBarSize = new Vector2(380f, 8f);
     private static readonly Color SmallTextColor = new Color(0.8f, 0.82f, 0.86f); // light grey
 
-    private TMP_Text comboRewardText;       // null until the first SetComboReward
+    private TMP_Text comboRewardText;       // null until the first SetWeaponStatus
     private RectTransform comboRewardBar;   // dark background of the bar
     private RectTransform comboRewardFill;
     private Image comboRewardFillImage;
     private float comboRewardTarget;        // the progress to show (0..1)
     private float comboRewardShown;         // the progress drawn now; slides toward comboRewardTarget
-    private string lastComboReward;         // what the text shows now, so it is only rebuilt when it changes
-    private int lastComboKillsToGo = -1;
 
     // Under the combo text: the COMBO WEAPONS status (Powers), e.g.
     // "[3] FRENZY ready!  RPG at 20" with its bar filled to 'progress' (0..1)
@@ -1353,79 +1233,9 @@ public class HUD : MonoBehaviour
         {
             BuildComboReward();
         }
-        comboRewardText.gameObject.SetActive(true);
-        comboRewardBar.gameObject.SetActive(true);
         comboRewardTarget = Mathf.Clamp01(progress);
         comboRewardText.text = "<color=#" + ColorUtility.ToHtmlStringRGB(color) + ">" + text + "</color>";
         comboRewardFillImage.color = color;
-        lastComboReward = null; // SetComboReward (if ever used again) rebuilds its text
-    }
-
-    // Under the combo text: what the combo earns next and how close it is,
-    // e.g. SetComboReward("FREEZE", 3, 0.4f) -> "Next: FREEZE in 3 kills" with a 40% bar.
-    // An empty nextReward hides the line and the bar.
-    public void SetComboReward(string nextReward, int killsToGo, float progress)
-    {
-        if (string.IsNullOrEmpty(nextReward))
-        {
-            if (comboRewardText != null)
-            {
-                comboRewardText.gameObject.SetActive(false);
-                comboRewardBar.gameObject.SetActive(false);
-            }
-            return;
-        }
-
-        if (comboRewardText == null)
-        {
-            BuildComboReward();
-        }
-        if (!comboRewardText.gameObject.activeSelf)
-        {
-            comboRewardText.gameObject.SetActive(true);
-            comboRewardBar.gameObject.SetActive(true);
-        }
-        comboRewardTarget = Mathf.Clamp01(progress);
-
-        // Only build a new string when the text really changes.
-        if (nextReward != lastComboReward || killsToGo != lastComboKillsToGo)
-        {
-            lastComboReward = nextReward;
-            lastComboKillsToGo = killsToGo;
-
-            string when;
-            if (killsToGo <= 0)
-            {
-                when = " now!";
-            }
-            else if (killsToGo == 1)
-            {
-                when = " in 1 kill";
-            }
-            else
-            {
-                when = " in " + killsToGo + " kills";
-            }
-
-            Color color = RewardColor(nextReward);
-            string colorTag = "<color=#" + ColorUtility.ToHtmlStringRGB(color) + ">";
-            comboRewardText.text = "Next: " + colorTag + nextReward + "</color>" + when;
-            comboRewardFillImage.color = color;
-        }
-    }
-
-    // The colour of a reward: cyan for the freeze, orange for the lure bomb.
-    private static Color RewardColor(string reward)
-    {
-        if (reward.IndexOf("FREEZE", System.StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            return Palette.FreezeCrate;
-        }
-        if (reward.IndexOf("LURE", System.StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            return Palette.LureCrate;
-        }
-        return Yellow;
     }
 
     private void UpdateComboRewardBar()
@@ -1551,7 +1361,6 @@ public class HUD : MonoBehaviour
     // Hint (dark box, bottom-centre) > Strip (yellow, left edge) + Text.
     private void BuildHint()
     {
-        EnsureLayers();
         Image box = CreateImage("HintBox", hintLayer, new Color(0.03f, 0.04f, 0.08f, 0.82f));
         hintBox = box.rectTransform;
         PlaceRect(hintBox, BottomCentre, BottomCentre, new Vector2(0f, HintBottom), new Vector2(600f, 60f));
@@ -1686,7 +1495,6 @@ public class HUD : MonoBehaviour
     // tip is the arrow's position and it points right (+x) before it is turned.
     private void BuildThreatArrows()
     {
-        EnsureLayers();
         for (int i = 0; i < MaxThreatArrows; i++)
         {
             RectTransform arrow = CreateRect("ThreatArrow", markerLayer);
@@ -1850,7 +1658,6 @@ public class HUD : MonoBehaviour
 
     private void BuildFloatingTexts()
     {
-        EnsureLayers();
         for (int i = 0; i < FloatingTextCount; i++)
         {
             TMP_Text label = CreateText(markerLayer, "FloatingText", "", 44f, Vector2.zero);
@@ -1948,7 +1755,6 @@ public class HUD : MonoBehaviour
     // QuizBox (dark, top-centre) > Accent (cyan line on top), Caption, Question, Timer > Fill.
     private void BuildQuiz()
     {
-        EnsureLayers();
         Image box = CreateImage("QuizBox", readoutLayer, new Color(0.03f, 0.05f, 0.1f, 0.88f));
         quizBox = box.rectTransform;
         PlaceRect(quizBox, TopCentre, TopCentre, new Vector2(0f, -QuizTop), new Vector2(QuizMinBoxWidth, 200f));
@@ -1994,10 +1800,7 @@ public class HUD : MonoBehaviour
         }
 
         // The game is over: hide the enemies' words so they do not show through the panel.
-        if (wordLayer != null)
-        {
-            wordLayer.gameObject.SetActive(false);
-        }
+        wordLayer.gameObject.SetActive(false);
 
         TMP_Text message;
         if (won)

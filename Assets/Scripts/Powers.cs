@@ -46,9 +46,7 @@ public class Powers : MonoBehaviour
     [Header("Charges")]
     [SerializeField] private int maxCharges = 3;
 
-    // Combo weapon costs. Constants on purpose: a value shown in the Inspector
-    // is saved with the scene (and kept by the open Editor), so a new default
-    // in the code would never reach it. Change them here.
+    // Combo weapon costs (also shown in the COMBO WEAPONS tip).
     public const int FrenzyCost = 10;                     // combo spent on a frenzy [3]
     public const int RocketCost = 15;                     // combo spent on one RPG shot [4]
 

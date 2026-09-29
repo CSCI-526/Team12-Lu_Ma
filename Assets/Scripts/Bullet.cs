@@ -12,9 +12,7 @@
 //
 // If the target is already gone when the bullet gets there (caught in another
 // blast, or it reached the player), the bullet simply disappears.
-//
-// It is built entirely in code (a small flat-coloured sphere with a short trail), so
-// it needs no prefab.
+// A bullet is a small flat-coloured sphere with a short trail.
 // ---------------------------------------------------------------------------
 using UnityEngine;
 

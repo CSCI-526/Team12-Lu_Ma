@@ -1,6 +1,6 @@
 // Palette.cs
 // ---------------------------------------------------------------------------
-// The colours of everything created while playing (zombies, the boss, rails,
+// The colours of everything created while playing (zombies, the boss,
 // explosions, rings, bullets, words). The game is a GREYBOX prototype on
 // purpose: no textures, no images, only flat colours on Unity's primitive
 // shapes (cubes, spheres, capsules, cylinders). The map and the props placed
@@ -21,9 +21,6 @@ using UnityEngine;
 
 public static class Palette
 {
-    // ---- The level ----
-    public static readonly Color RouteGuide = new Color(0.86f, 0.80f, 0.62f); // the faint arrows painted along the run (Level)
-
     // ---- Zombies (colour coded) ----
     public static readonly Color ZombieGrey = new Color(0.80f, 0.82f, 0.85f);
     public static readonly Color RunnerYellow = new Color(0.90f, 0.85f, 0.30f);
@@ -62,12 +59,7 @@ public static class Palette
             return material;
         }
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-        if (shader == null)
-        {
-            shader = Shader.Find("Standard");
-        }
-        material = new Material(shader);
+        material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
         material.name = "Lit " + color;
         material.color = color;
         if (material.HasProperty("_Smoothness"))
@@ -87,12 +79,7 @@ public static class Palette
             return material;
         }
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null)
-        {
-            shader = Shader.Find("Unlit/Color");
-        }
-        material = new Material(shader);
+        material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
         material.name = "Unlit " + color;
         material.color = color;
         unlitMaterials[color] = material;

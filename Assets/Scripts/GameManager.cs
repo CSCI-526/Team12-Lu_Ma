@@ -10,8 +10,8 @@
 //     timers, boss attacks) freezes; the countdown uses real time.
 //
 // THE COMBO: +1 for every kill, -1 on a wrong key, back to 1 when you get hurt.
-// Each kill is worth 10 x combo points, and every 5 kills in a row earn a
-// power charge (lure bomb or freeze, see Powers). So clean typing pays twice.
+// Each kill is worth 10 x combo points, and the combo buys the combo weapons
+// (FRENZY and RPG, see Powers). So clean typing pays twice.
 //
 // Other scripts reach it through GameManager.Instance, for example:
 //   GameManager.Instance.AddKill();
@@ -326,7 +326,7 @@ public class GameManager : MonoBehaviour
         hud.ShowPausePanel();
     }
 
-    // Called by the Resume button (built by HUD) and by OnPauseKey().
+    // Called by the Resume button on the pause panel (wired in the scene) and by OnPauseKey().
     public void ResumeGame()
     {
         if (State != GameState.Paused || resumeCountdown != null)
@@ -424,7 +424,7 @@ public class GameManager : MonoBehaviour
         {
             gained += PointsPerKill * Combo * multiplier;
             Combo += 1;
-            powers.OnComboChanged(Combo); // every 5 in a row earns a power
+            powers.OnComboChanged(Combo); // the combo weapons line on the HUD follows the combo
         }
 
         Score += gained;

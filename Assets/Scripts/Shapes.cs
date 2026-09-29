@@ -1,9 +1,9 @@
 // Shapes.cs
 // ---------------------------------------------------------------------------
 // One helper for building things out of Unity's primitive shapes while the
-// game runs. The boss, its quiz answers, the rails, the bullets, the lure bomb
-// and the effects are made with it (the zombies, the map and the props are
-// prefabs or scene objects instead):
+// game runs. The boss, its quiz answers, the bullets, the lure bomb and the
+// effects are made with it (the zombies, the map, the props and the route
+// arrows are prefabs or scene objects instead):
 //
 //   Shapes.Block(PrimitiveType.Cube, "Box", parent, position, size, Palette.Lit(Palette.Bomb));
 //

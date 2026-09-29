@@ -7,8 +7,8 @@
 //     it: what the combo can buy (the COMBO WEAPONS status line + a thin bar)
 //   - the powers (bottom-left, just above the height of the bottom word box so
 //     they never overlap it): "[1] LURE BOMB" and "[2] FREEZE" with their charges,
-//     and the combo weapons kept for later, "[3] FRENZY" (skull) and "[4] RPG"
-//     (rocket): lit while one is kept, clickable to use it
+//     and the combo weapons kept for later, "[3] FRENZY" and "[4] RPG": one
+//     square per slot, lit while a weapon is kept, clickable to use it
 //   - while 1 is held (aiming the lure bomb): an arrow-keys hint in a dark box
 //     (bottom-right); a "+1" next to a power whenever a charge is gained
 //   - the first-time tip box (the game waits until Enter / OK)
@@ -836,16 +836,16 @@ public class HUD : MonoBehaviour
     // a white key cap with the key to press, the power's name, then one small
     // square ("pip") per possible charge, filled in the power's colour.
     // Rows 2 and 3 are the COMBO WEAPONS the player has bought and kept for later:
-    //   [3] FRENZY     [skull]
-    //   [4] RPG        [rocket]
-    // the icon lights up in the weapon's colour while one is kept. These two
-    // rows can also be CLICKED to use the weapon (same as pressing its key).
+    //   [3] FRENZY     [ ] [ ]
+    //   [4] RPG        [ ] [ ]
+    // one plain square per slot, filled in the weapon's colour while one is kept.
+    // These two rows can also be CLICKED to use the weapon (same as pressing its key).
 
     private const int PowerCount = 4;
     private const int FrenzyRow = 2;
     private const int RocketRow = 3;
-    private const float WeaponIconSlot = 44f;   // dark square behind a weapon's icon
-    private const float WeaponIconSize = 38f;
+    private const float WeaponSlotSize = 44f;   // dark square of one weapon slot
+    private const float WeaponSquareSize = 32f; // the square inside it (grey, or lit while a weapon is kept)
     private const float PowerRowHeight = 44f;
     private const float PowerRowGap = 10f;
     private const float PowerKeySize = 40f;
@@ -867,7 +867,7 @@ public class HUD : MonoBehaviour
     private readonly List<Image> freezePips = new List<Image>();
     private readonly int[] powerCharges = new int[PowerCount];
     private readonly float[] powerPulseTimers = new float[PowerCount]; // counts down while a row pulses
-    private readonly Image[,] weaponIcons = new Image[PowerCount, Powers.MaxKept]; // only the weapon rows have them
+    private readonly Image[,] weaponSquares = new Image[PowerCount, Powers.MaxKept]; // only the weapon rows have them
 
     public void SetPowers(int lureCharges, int freezeCharges, int maxCharges)
     {
@@ -888,7 +888,7 @@ public class HUD : MonoBehaviour
         }
     }
 
-    // The combo weapons kept for later (Powers): one icon per slot, lit for each weapon kept.
+    // The combo weapons kept for later (Powers): one square per slot, lit for each weapon kept.
     public void SetWeapons(int frenzyKept, int rocketKept)
     {
         if (powersPanel == null)
@@ -902,7 +902,7 @@ public class HUD : MonoBehaviour
         {
             for (int slot = 0; slot < Powers.MaxKept; slot++)
             {
-                weaponIcons[row, slot].color = slot < powerCharges[row] ? PowerColor(row) : EmptyPipColor;
+                weaponSquares[row, slot].color = slot < powerCharges[row] ? PowerColor(row) : EmptyPipColor;
             }
             if (powerPulseTimers[row] <= 0f)
             {
@@ -1098,22 +1098,20 @@ public class HUD : MonoBehaviour
         SetWeapons(0, 0);
     }
 
-    // A weapon row: one icon per slot (Powers.MaxKept), each on a dark square
-    // where the pips would be, and the whole row is a button (clicking it uses
-    // the weapon, like its key).
+    // A weapon row: one plain square per slot (Powers.MaxKept), each on a dark
+    // square where the pips would be, and the whole row is a button (clicking it
+    // uses the weapon, like its key).
     private void BuildWeaponSlot(RectTransform rowRect, int row)
     {
         for (int i = 0; i < Powers.MaxKept; i++)
         {
-            Image slot = CreateImage("IconSlot", rowRect, new Color(0f, 0f, 0f, 0.55f));
-            PlaceRect(slot.rectTransform, LeftMiddle, LeftMiddle, new Vector2(PowerPipsX + i * (WeaponIconSlot + PowerPipGap), 0f),
-                new Vector2(WeaponIconSlot, WeaponIconSlot));
+            Image slot = CreateImage("WeaponSlot", rowRect, new Color(0f, 0f, 0f, 0.55f));
+            PlaceRect(slot.rectTransform, LeftMiddle, LeftMiddle, new Vector2(PowerPipsX + i * (WeaponSlotSize + PowerPipGap), 0f),
+                new Vector2(WeaponSlotSize, WeaponSlotSize));
 
-            Image icon = CreateImage("Icon", slot.rectTransform, EmptyPipColor);
-            icon.sprite = row == FrenzyRow ? HudIcons.Skull() : HudIcons.Rocket();
-            icon.preserveAspect = true;
-            PlaceRect(icon.rectTransform, Centre, Centre, Vector2.zero, new Vector2(WeaponIconSize, WeaponIconSize));
-            weaponIcons[row, i] = icon;
+            Image square = CreateImage("Square", slot.rectTransform, EmptyPipColor);
+            PlaceRect(square.rectTransform, Centre, Centre, Vector2.zero, new Vector2(WeaponSquareSize, WeaponSquareSize));
+            weaponSquares[row, i] = square;
         }
 
         // An invisible image over the row catches the mouse click.
@@ -1205,7 +1203,7 @@ public class HUD : MonoBehaviour
 
         TMP_Text plusOne = CreateText(powersPanel, "PlusOne", "+1", 34f, Vector2.zero);
         RectTransform rowRect = powerRows[row];
-        float x = row < FrenzyRow ? PowerPipsX + 140f : PowerPipsX + Powers.MaxKept * (WeaponIconSlot + PowerPipGap) + 10f;
+        float x = row < FrenzyRow ? PowerPipsX + 140f : PowerPipsX + Powers.MaxKept * (WeaponSlotSize + PowerPipGap) + 10f;
         Vector2 start = rowRect.anchoredPosition + new Vector2(x, 0f);
         PlaceRect(plusOne.rectTransform, BottomLeft, LeftMiddle, start, new Vector2(80f, PowerRowHeight));
         plusOne.alignment = TextAlignmentOptions.Left;

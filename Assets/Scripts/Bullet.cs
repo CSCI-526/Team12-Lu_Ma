@@ -43,8 +43,6 @@ public class Bullet : MonoBehaviour
     private ITypingTarget target;
     private bool finalShot;
     private bool rocket;
-    private float smokeTimer;                    // a rocket drops a smoke puff every SmokeInterval seconds
-    private const float SmokeInterval = 0.035f;
     private Vector3 lastAim;     // where the target was last seen (a rocket still flies there if it dies)
     private Vector3 flyDirection;
     private float age;
@@ -59,7 +57,8 @@ public class Bullet : MonoBehaviour
         Vector3 start = CameraDirector.ShotOrigin(StartOffset);
         if (rocket)
         {
-            RocketFx.Launch(start, aim - start); // muzzle flash, sparks, a hard kick
+            CameraDirector.Kick(3f); // a hard kick of the view
+            CameraDirector.Shake(0.25f);
         }
         else
         {
@@ -78,17 +77,6 @@ public class Bullet : MonoBehaviour
         trail.endWidth = 0f;
         trail.sharedMaterial = Palette.Unlit(color);
         trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        if (rocket)
-        {
-            // A long trail that fades from fire orange to smoke grey.
-            trail.startWidth = size * 0.9f;
-            trail.sharedMaterial = RocketTrailMaterial();
-            Gradient fade = new Gradient();
-            fade.SetKeys(
-                new[] { new GradientColorKey(RocketColor, 0f), new GradientColorKey(new Color(0.5f, 0.5f, 0.52f), 0.5f) },
-                new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(0.6f, 0.5f), new GradientAlphaKey(0f, 1f) });
-            trail.colorGradient = fade;
-        }
 
         Bullet bullet = bulletObject.AddComponent<Bullet>();
         bullet.target = target;
@@ -135,17 +123,6 @@ public class Bullet : MonoBehaviour
         }
         flyDirection = (aim - transform.position).normalized;
         transform.position = Vector3.MoveTowards(transform.position, aim, step);
-
-        // A rocket leaves smoke puffs behind it.
-        if (rocket)
-        {
-            smokeTimer -= Time.deltaTime;
-            if (smokeTimer <= 0f)
-            {
-                smokeTimer = SmokeInterval;
-                RocketFx.SmokePuff(transform.position);
-            }
-        }
     }
 
     // The RPG rocket's blast: kills zombies, sets off barrels and hurts the boss
@@ -154,23 +131,8 @@ public class Bullet : MonoBehaviour
     {
         if (GameManager.Instance.State == GameState.Playing)
         {
-            RocketFx.Blast(transform.position, RocketBlastRadius); // flash, fireball, shockwave, debris
             Explosion.Detonate(transform.position, RocketBlastRadius, null, RocketBossDamage);
         }
-    }
-
-    // The rocket trail's material: a shader that uses the trail's colours and
-    // transparency (the Unlit materials of Palette show one solid colour).
-    private static Material rocketTrailMaterial;
-
-    private static Material RocketTrailMaterial()
-    {
-        if (rocketTrailMaterial == null)
-        {
-            Shader shader = Shader.Find("Sprites/Default");
-            rocketTrailMaterial = shader != null ? new Material(shader) : Palette.Unlit(RocketColor);
-        }
-        return rocketTrailMaterial;
     }
 
     private void Hit()

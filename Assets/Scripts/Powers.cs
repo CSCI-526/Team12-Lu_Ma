@@ -16,14 +16,13 @@
 //
 // COMBO WEAPONS: the combo (kills in a row without a mistake) buys them.
 // Pressing the key BUYS the weapon when the combo is high enough: the combo is
-// spent and the weapon is KEPT in a slot (bottom-left, with an icon) until the
+// spent and the weapon is KEPT in a slot (bottom-left, a lit square) until the
 // player wants it. Otherwise the key (or a click on the slot) USES a kept one:
 //   [3] FRENZY - costs FrenzyCost combo: for frenzySeconds every enemy word
 //       becomes a TINY word (1 to 4 letters, random) in a vivid colour, drawn bigger;
-//       the real words come back when it ends. (Skull icon.)
+//       the real words come back when it ends.
 //   [4] RPG    - costs RocketCost combo: the next word the player finishes is
 //       shot with a rocket that explodes around its target (Bullet, Explosion).
-//       (Rocket icon.)
 //   Two of each can be kept (MaxKept); one weapon can be BOUGHT per wave
 //   (oneWeaponPerWave). The line under the big COMBO on the HUD shows what the
 //   combo can buy.
@@ -95,7 +94,7 @@ public class Powers : MonoBehaviour
     public bool RocketLoaded { get; private set; }
 
     // Combo weapons bought and kept for later (MaxKept of each at most), shown
-    // bottom-left with their icons; the key (or a click) uses them.
+    // bottom-left as lit squares; the key (or a click) uses them.
     public const int MaxKept = 2;         // slots per weapon
     public int FrenzyKept { get; private set; }
     public int RocketKept { get; private set; }

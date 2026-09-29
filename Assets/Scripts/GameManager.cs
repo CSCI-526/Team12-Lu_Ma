@@ -231,7 +231,7 @@ public class GameManager : MonoBehaviour
             + "<color=#FF8C1A>[4] RPG</color> - costs " + Powers.RocketCost + " combo: your next finished word fires a rocket\n"
             + "that blows up everything around its target (it hurts the boss too).\n\n"
             + "Press 3 / 4 to GET a weapon: it is kept bottom-left (2 slots each) until you want it.\n"
-            + "Press the key again (or click its icon) to USE it. Weaker against the boss!\n"
+            + "Press the key again (or click its slot) to USE it. Weaker against the boss!\n"
             + "One weapon per wave. A wrong key costs 1 combo; a bite resets it.\n"
             + "Lure bombs [1] and freezes [2] come from supply crates.",
             Palette.BlastOrange);

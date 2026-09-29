@@ -47,7 +47,7 @@ public static class Palette
     public static readonly Color WordOrb = new Color(1.00f, 0.55f, 0.85f);   // pink, like the boss's energy orbs (their words are case-sensitive); lighter than WordFrenzy so the two never look alike
     public static readonly Color WordOrbFlash = new Color(1.00f, 0.92f, 0.97f); // almost white: an orb's word flashes up to this with every throb
     public static readonly Color WordFrenzy = new Color(1.00f, 0.25f, 0.35f); // vivid red: the short words during a FRENZY
-    public static readonly Color WeaponFrenzy = new Color(1.00f, 0.30f, 0.20f); // the FRENZY weapon: its HUD slot, skull icon and status line
+    public static readonly Color WeaponFrenzy = new Color(1.00f, 0.30f, 0.20f); // the FRENZY weapon: its HUD slot and status line
 
     private static readonly Dictionary<Color, Material> litMaterials = new Dictionary<Color, Material>();
     private static readonly Dictionary<Color, Material> unlitMaterials = new Dictionary<Color, Material>();
